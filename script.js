@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
         noTablesMessage.classList.add('hidden');
 
         const { data: filteredTables, error } = await supabaseClient.rpc('get_tables_for_day', {
-            day_string: dateString
+            date_string: dateString
         });
 
         if (error) {
@@ -609,6 +609,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initialize();
 });
-
-</body>
-</html>
