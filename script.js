@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- SUPABASE CLIENT INITIALIZATION ---
     const SUPABASE_URL = 'https://ennlvlcogzowropkwbiu.supabase.co'; // PASTE YOUR PROJECT URL HERE
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc'; // PASTE YOUR ANON PUBLIC KEY HERE
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc'; // PASTE YOUR ANON PUBLIC KEY HERE
     
     if (SUPABASE_URL.includes('your-project-ref') || SUPABASE_ANON_KEY.includes('your-long-anon-key')) {
         const container = document.querySelector('.container');
@@ -588,21 +588,22 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const initialize = async () => {
-        const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
-        if (datesError) {
-            console.error("Could not fetch upcoming dates", datesError);
-            loadingSpinner.classList.add('hidden');
-            tablesContainer.innerHTML = `<p class="text-center text-red-500">Could not load schedule.</p>`;
-            return;
-        }
+        try {
+            const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
+            if (datesError) throw datesError;
 
-        if (dates && dates.length > 0) {
-            renderTabs(dates); 
-            await refreshData();
-        } else {
+            if (dates && dates.length > 0) {
+                renderTabs(dates); 
+                await refreshData();
+            } else {
+                loadingSpinner.classList.add('hidden');
+                noTablesMessage.textContent = "No upcoming dinners are scheduled. Check back soon!";
+                noTablesMessage.classList.remove('hidden');
+            }
+        } catch (error) {
+            console.error("Initialization failed:", error);
             loadingSpinner.classList.add('hidden');
-            noTablesMessage.textContent = "No upcoming dinners are scheduled. Check back soon!";
-            noTablesMessage.classList.remove('hidden');
+            tablesContainer.innerHTML = `<p class="text-center text-red-500">Could not initialize the application. Please try refreshing the page.</p>`;
         }
     };
 
