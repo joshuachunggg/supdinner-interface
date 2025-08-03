@@ -1,0 +1,86 @@
+/* Applying custom fonts */
+body {
+    font-family: 'IBM Plex Sans', 'sans-serif';
+}
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Gowun Batang', 'serif';
+}
+.font-heading {
+    font-family: 'Gowun Batang', 'serif';
+}
+/* Simple transition for modal */
+.modal-backdrop {
+    transition: opacity 0.3s ease;
+}
+.modal-content {
+    transition: transform 0.3s ease;
+}
+/* Custom scrollbar for better aesthetics */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #e0dcd5;
+}
+::-webkit-scrollbar-thumb {
+    background: #c98769;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #b8795c;
+}
+.locked-in-banner {
+     background-color: #e9d5a1;
+     color: #5a4a2c;
+}
+.cancelled-banner {
+     background-color: #f3f4f6;
+     color: #6b7280;
+}
+/* FIX: Add a specific, forceful style to override Webflow's default button styles */
+.supdinner-button {
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 10 !important;
+    padding: 0.625rem 1.5rem !important;
+    border-radius: 0.5rem !important;
+    font-family: 'Gowun Batang', serif !important;
+    font-weight: 600 !important;
+    transition: background-color 0.3s, border-color 0.3s, color 0.3s !important;
+}
+.supdinner-button.btn-primary {
+    background-color: #373d36 !important;
+    color: white !important;
+    border: 1px solid transparent !important;
+}
+.supdinner-button.btn-primary:hover {
+    background-color: #4a5149 !important;
+}
+.supdinner-button.btn-secondary {
+    background-color: white !important;
+    color: #c98769 !important;
+    border: 1px solid #c98769 !important;
+}
+.supdinner-button.btn-secondary:hover {
+    background-color: #fef2f2 !important;
+    border-color: #ef4444 !important;
+    color: #ef4444 !important;
+}
+.supdinner-button.btn-disabled {
+    background-color: #9ca3af !important;
+    color: white !important;
+    cursor: not-allowed !important;
+}
+/* FIX: Add vertical separators between weeks */
+.week-separator {
+    width: 1px;
+    background-color: #373d36;
+    margin: auto 0.5rem;
+    height: 1.5rem; /* Short separator */
+}
+/* FIX: Make modal content scrollable on mobile */
+.modal-body {
+    overflow-y: auto;
+    max-height: calc(100vh - 200px); /* Adjust as needed */
+}
