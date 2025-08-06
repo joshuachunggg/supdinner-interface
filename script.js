@@ -157,9 +157,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
             }
 
-            // FIX: Handle null min_spots and render dots correctly
-            const minSpots = table.min_spots || table.total_spots;
             const spotsIndicatorHTML = [...Array(Number(table.total_spots) || 0)].map((_, i) => {
+                const minSpots = table.min_spots || table.total_spots;
                 if (i < table.spots_filled) {
                     return `<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`; // Filled spot
                 } else if (i < minSpots) {
