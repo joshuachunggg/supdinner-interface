@@ -160,21 +160,21 @@ document.addEventListener('DOMContentLoaded', () => {
             // FIX: Rewrote dot rendering logic to be more robust and handle null values.
             const total = parseInt(table.total_spots, 10) || 0;
             const filled = parseInt(table.spots_filled, 10) || 0;
-            let min = parseInt(table.min_spots, 10);
-            if (isNaN(min) || min < 0) min = 0; // Only set to 0 if invalid
-            
+            let min = parseInt(table.min_spots, 10) || 0;
+            if (min <= 0) {
+                min = total;
+            }
             let dots = [];
             for (let i = 0; i < total; i++) {
                 if (i < filled) {
-                    // Orange: filled
                     dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);
                 } else if (i < min) {
-                    // Dark grey: required but not filled
                     dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);
                 } else {
-                    // Light grey: optional, not filled
+                    return `<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`; // Optional unfilled spot
                     dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);
                 }
+            }).join('');
             }
             const spotsIndicatorHTML = dots.join('');
 
