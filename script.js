@@ -616,4 +616,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initialize();
 });
-</script>
