@@ -9,7 +9,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="stylesheet" href="style.css">
     <script>
         // Customizing Tailwind theme to add our brand colors and fonts
         tailwind.config = {
@@ -22,6 +21,7 @@
                         'brand-accent-hover': '#b8795c',
                         'brand-button': '#373d36',
                         'brand-button-hover': '#4a5149',
+                        'brand-gray-dark': '#6b7280', // For minimum spots
                     },
                     fontFamily: {
                         'sans': ['IBM Plex Sans', 'sans-serif'],
@@ -31,6 +31,7 @@
             }
         }
     </script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-brand-bg text-brand-text">
 
