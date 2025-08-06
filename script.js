@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
         noTablesMessage.classList.add('hidden');
 
         const { data: filteredTables, error } = await supabaseClient.rpc('get_tables_for_day', {
-            date_string: dateString
+            day_string: dateString
         });
 
         if (error) {
@@ -333,8 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         formError1.classList.add('hidden');
         joinSubmitButton.disabled = true;
-    
-        // This is the logic for a brand-new user filling out all fields
+
         if (isNewUserFlow) {
             const formData = {
                 firstName: document.getElementById('first-name').value,
@@ -344,35 +343,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 marketingOptIn: document.getElementById('marketing-checkbox').checked,
                 tableId: selectedTableId
             };
-    
+            
             if (!formData.firstName || !formData.ageRange) {
                 formError1.textContent = "Please fill out all your details.";
                 formError1.classList.remove('hidden');
                 joinSubmitButton.disabled = false;
                 return;
             }
-    
+
             try {
                 const functionName = signupAction === 'join' ? 'signup-and-join' : 'signup-and-waitlist';
                 const { data, error } = await supabaseClient.functions.invoke(functionName, { body: formData });
-                
-                if (error) throw error; // Stop if the function call itself fails
-    
-                // --- KEY FIX ---
-                // Check that the function returned a valid user ID before proceeding
-                if (data && data.userId) {
-                    localStorage.setItem('supdinner_user_id', data.userId);
-                    showSuccessStep();
-                } else {
-                    // If no userId is returned, show an error and stop.
-                    throw new Error("Server did not return a valid user ID. The signup may have failed.");
-                }
+                if (error) throw error;
+                localStorage.setItem('supdinner_user_id', data.userId);
+                showSuccessStep();
             } catch(error) {
                 formError1.textContent = `Error: ${error.message}`;
                 formError1.classList.remove('hidden');
                 joinSubmitButton.disabled = false;
             }
-        } else { // This is the logic for a returning user who only enters a phone number
+        } else {
             const phoneNumber = document.getElementById('phone-number').value;
             if (!phoneNumber) {
                 formError1.textContent = "Please enter your phone number.";
@@ -381,30 +371,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             try {
-                // First, check if the user exists
-                const { data: userData, error: userError } = await supabaseClient.functions.invoke('get-user-by-phone', { body: { phoneNumber } });
-                
-                if (userError) throw userError;
-    
-                // If the user exists and has a valid ID
-                if (userData && userData.userId) {
-                    localStorage.setItem('supdinner_user_id', userData.userId);
-                    const functionName = signupAction === 'join' ? 'join-table' : 'join-waitlist';
-                    
-                    // Join the table or waitlist
-                    const { error: actionError } = await supabaseClient.functions.invoke(functionName, {
-                        body: { tableId: selectedTableId, userId: userData.userId }
-                    });
-    
-                    if (actionError) throw actionError;
-                    
-                    showSuccessStep();
-                } else { 
-                    // If no user is found, switch to the new user flow
+                const { data, error } = await supabaseClient.functions.invoke('get-user-by-phone', { body: { phoneNumber } });
+                if (error) throw error;
+
+                if (!data.userId) { 
                     isNewUserFlow = true;
                     newUserFields.classList.remove('hidden');
                     joinSubmitButton.textContent = signupAction === 'join' ? 'Confirm & Join Table' : 'Confirm & Join Waitlist';
                     joinSubmitButton.disabled = !disclaimerCheckbox.checked;
+                } else { 
+                    localStorage.setItem('supdinner_user_id', data.userId);
+                    const functionName = signupAction === 'join' ? 'join-table' : 'join-waitlist';
+                    const { error: actionError } = await supabaseClient.functions.invoke(functionName, {
+                        body: {
+                            tableId: selectedTableId,
+                            userId: data.userId
+                        }
+                    });
+
+                    if (actionError) throw actionError;
+                    
+                    showSuccessStep();
                 }
             } catch (error) {
                 formError1.textContent = `Error: ${error.message}`;
@@ -413,6 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+
     logoutLink.addEventListener('click', (e) => {
         e.preventDefault();
         localStorage.removeItem('supdinner_user_id');
@@ -621,3 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initialize();
 });
+</script>
+
+</body>
+</html>
