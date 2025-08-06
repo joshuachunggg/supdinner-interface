@@ -179,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const spotsIndicatorHTML = dots.join('');
 
+
             const cardContent = document.createElement('div');
             cardContent.innerHTML = `
                 ${bannerHTML}
