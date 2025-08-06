@@ -158,24 +158,26 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // FIX: Rewrote dot rendering logic to be more robust and handle null values.
-            const total = parseInt(table.total_spots, 10) || 0;
-            const filled = parseInt(table.spots_filled, 10) || 0;
-            let min = parseInt(table.min_spots, 10) || 0;
-            if (min <= 0) {
-                min = total;
-            }
+            const total = parseInt(table.total_spots, 10);
+            const filled = parseInt(table.spots_filled, 10);
+            const minRaw = parseInt(table.min_spots, 10);
+            
+            const totalSafe = isNaN(total) ? 0 : total;
+            const filledSafe = isNaN(filled) ? 0 : filled;
+            let min = isNaN(minRaw) ? totalSafe : minRaw;
+            if (min <= 0) min = totalSafe;
+            
             let dots = [];
-            for (let i = 0; i < total; i++) {
-                if (i < filled) {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);
+            for (let i = 0; i < totalSafe; i++) {
+                if (i < filledSafe) {
+                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`); // orange
                 } else if (i < min) {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);
+                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`); // dark gray
                 } else {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);
+                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`); // light gray
                 }
             }
             const spotsIndicatorHTML = dots.join('');
-
 
             const cardContent = document.createElement('div');
             cardContent.innerHTML = `
