@@ -627,14 +627,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initialize();
 });
-    if (SUPABASE_URL.includes('your-project-ref') || SUPABASE_ANON_KEY.includes('your-long-anon-key')) {
-        const container = document.querySelector('.container');
-        container.innerHTML = `<div class="text-center p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-            <h2 class="font-bold text-lg">Configuration Needed</h2>
-            <p class="mt-2">Please open the HTML code and replace the placeholder <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> with your actual keys from your Supabase project dashboard.</p>
-        </div>`;
-        return;
-    }
 
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
