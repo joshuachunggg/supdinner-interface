@@ -157,9 +157,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
             }
 
-            const spotsIndicatorHTML = [...Array(Number(table.total_spots) || 0)].map((_, i) => 
-                `<span class="h-2.5 w-2.5 rounded-full ${i < table.spots_filled ? 'bg-brand-accent' : 'bg-gray-300'}"></span>`
-            ).join('');
+            const spotsIndicatorHTML = [...Array(Number(table.total_spots) || 0)].map((_, i) => {
+                if (i < table.spots_filled) {
+                    return `<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`; // Filled spot
+                } else if (i < table.min_spots) {
+                    return `<span class="h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`; // Required unfilled spot
+                } else {
+                    return `<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`; // Optional unfilled spot
+                }
+            }).join('');
 
             const cardContent = document.createElement('div');
             cardContent.innerHTML = `
@@ -610,6 +616,3 @@ document.addEventListener('DOMContentLoaded', () => {
     initialize();
 });
 </script>
-
-</body>
-</html>
