@@ -2,11 +2,7 @@
 body {
     font-family: 'IBM Plex Sans', 'sans-serif';
 }
-/* FIX: Make the h1 font more specific to override Webflow defaults */
-h1.font-heading {
-    font-family: 'Gowun Batang', serif !important;
-}
-h2, h3, h4, h5, h6 {
+h1, h2, h3, h4, h5, h6 {
     font-family: 'Gowun Batang', 'serif';
 }
 .font-heading {
