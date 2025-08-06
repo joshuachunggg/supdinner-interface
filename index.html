@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,10 +8,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-    <!-- Use Supabase v1 for global `supabase` object -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="style.css">
     <script>
+        // Customizing Tailwind theme to add our brand colors and fonts
         tailwind.config = {
             theme: {
                 extend: {
@@ -280,8 +279,7 @@
             </button>
         </div>
     </div>
-
-    <!-- The external JavaScript will be loaded by the embed code -->
-    <script src="script.js"></script>
+    
+    <script src="script.js" defer></script>
 </body>
 </html>
