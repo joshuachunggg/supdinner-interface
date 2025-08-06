@@ -170,11 +170,11 @@ document.addEventListener('DOMContentLoaded', () => {
             let dots = [];
             for (let i = 0; i < totalSafe; i++) {
                 if (i < filledSafe) {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`); // orange
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`); // orange
                 } else if (i < min) {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`); // dark gray
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`); // dark gray
                 } else {
-                    dots.push(`<span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span>`); // light gray
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`); // light gray
                 }
             }
             const spotsIndicatorHTML = dots.join('');
