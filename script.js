@@ -158,38 +158,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // FIX: Rewrote dot rendering logic to be more robust and handle null values.
-            console.groupCollapsed(`Debug Table: ID ${table.id}`);
-            console.log("Raw table object:", table);
-            console.log("total_spots (raw):", table.total_spots);
-            console.log("spots_filled (raw):", table.spots_filled);
-            console.log("min_spots (raw):", table.min_spots);
-            
-            const total = parseInt(table.total_spots, 10);
-            const filled = parseInt(table.spots_filled, 10);
-            const minRaw = parseInt(table.min_spots, 10);
-            
-            const totalSafe = isNaN(total) ? 0 : total;
-            const filledSafe = isNaN(filled) ? 0 : filled;
-            let min = isNaN(minRaw) ? totalSafe : minRaw;
-            if (min <= 0) min = totalSafe;
-            
-            console.log("Parsed totalSafe:", totalSafe);
-            console.log("Parsed filledSafe:", filledSafe);
-            console.log("Parsed min:", min);
-            
-            let dots = [];
-            for (let i = 0; i < totalSafe; i++) {
-                if (i < filledSafe) {
-                    dots.push(`<orange>`);
-                } else if (i < min) {
-                    dots.push(`<dark-gray>`);
-                } else {
-                    dots.push(`<light-gray>`);
-                }
-            }
-            console.log("Dot logic result (shorthand):", dots.join(' '));
-            console.groupEnd();
-
             const total = parseInt(table.total_spots, 10);
             const filled = parseInt(table.spots_filled, 10);
             const minRaw = parseInt(table.min_spots, 10);
