@@ -179,6 +179,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const spotsIndicatorHTML = dots.join('');
 
+            console.log({
+              tableId: table.id,
+              total: totalSafe,
+              filled: filledSafe,
+              min,
+              dotsLength: dots.length,
+              dots
+            });
 
             const cardContent = document.createElement('div');
             cardContent.innerHTML = `
