@@ -4,32 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SupDinner - Join a Table</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              'brand-bg': '#f5f1eb',
-              'brand-text': '#373d36',
-              'brand-accent': '#c98769',
-              'brand-accent-hover': '#b8795c',
-              'brand-gray-dark': '#636363',
-              'brand-button': '#373d36',
-              'brand-button-hover': '#4a5149',
-            },
-            fontFamily: {
-              'sans': ['IBM Plex Sans', 'sans-serif'],
-              'heading': ['Gowun Batang', 'serif'],
+        // Customizing Tailwind theme to add our brand colors and fonts
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'brand-bg': '#f5f1eb',
+                        'brand-text': '#373d36',
+                        'brand-accent': '#c98769',
+                        'brand-accent-hover': '#b8795c',
+                        'brand-gray-dark': '#636363',
+                        'brand-button': '#373d36',
+                        'brand-button-hover': '#4a5149',
+                    },
+                    fontFamily: {
+                        'sans': ['IBM Plex Sans', 'sans-serif'],
+                        'heading': ['Gowun Batang', 'serif'],
+                    }
+                }
             }
-          }
         }
-      }
     </script>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-brand-bg text-brand-text">
