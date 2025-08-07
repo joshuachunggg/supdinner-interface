@@ -210,7 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="mt-4 pt-4 border-t border-gray-200">
                         <div class="flex items-center justify-between text-sm">
                             <p class="text-gray-600 font-heading">Spots Filled:</p>
-                            <div class="flex items-center space-x-1.5">
+                            <div class="flex items-center flex-wrap gap-1">
                                 ${spotsIndicatorHTML}
                                 <span class="font-medium text-brand-text">${table.spots_filled}/${table.total_spots}</span>
                             </div>
