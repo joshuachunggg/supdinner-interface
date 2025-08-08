@@ -157,17 +157,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
             }
 
-            // Robust dot rendering that tolerates nulls
+            // FIX: Robust dot rendering that tolerates null/undefined and keeps relationships sane
             const totalRaw  = Number(table.total_spots);
             const filledRaw = Number(table.spots_filled);
             const minRaw    = Number(table.min_spots);
 
             const filled = Number.isFinite(filledRaw) ? Math.max(0, filledRaw) : 0;
 
-            // Prefer explicit total; else fall back to min; else to filled (at least 1 if there's data)
+            // Prefer explicit total; else fall back to min; else to filled; else 0
             let total = Number.isFinite(totalRaw) ? totalRaw
-                    : Number.isFinite(minRaw)  ? minRaw
-                    : (filled > 0 ? filled : 0);
+                       : Number.isFinite(minRaw)  ? minRaw
+                       : (filled > 0 ? filled : 0);
 
             // Derive a sane min
             let min = Number.isFinite(minRaw) ? minRaw : Math.max(0, Math.min(total, filled));
@@ -179,28 +179,29 @@ document.addEventListener('DOMContentLoaded', () => {
             // Build dots
             let dots = [];
             for (let i = 0; i < total; i++) {
-            if (i < filled) {
-                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);     // filled
-            } else if (i < min) {
-                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);  // minimum
-            } else {
-                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);         // extra capacity
-            }
+                if (i < filled) {
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);     // filled
+                } else if (i < min) {
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);  // minimum
+                } else {
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);         // extra capacity
+                }
             }
 
             const spotsIndicatorHTML = dots.join('');
 
+            // Safe displays
+            const totalDisplay  = Number.isFinite(totalRaw)  ? totalRaw  : total;
+            const filledDisplay = Number.isFinite(filledRaw) ? filledRaw : filled;
 
             console.log({
               tableId: table.id,
-              total: totalSafe,
-              filled: filledSafe,
+              total,
+              filled,
               min,
-              dotsLength: dots.length,
-              dots
+              dotsLength: dots.length
             });
-
-            const cardContent = document.createElement('div');
+const cardContent = document.createElement('div');
             cardContent.innerHTML = `
                 ${bannerHTML}
                 <div class="p-6">
@@ -224,7 +225,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <p class="text-gray-600 font-heading">Spots Filled:</p>
                             <div class="flex items-center flex-wrap gap-1">
                                 ${spotsIndicatorHTML}
-                                <span class="font-medium text-brand-text">${table.spots_filled}/${table.total_spots}</span>
+                                <span class="font-medium text-brand-text">${filledDisplay}/${totalDisplay}</span>
                             </div>
                         </div>
                     </div>
