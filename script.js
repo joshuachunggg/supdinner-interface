@@ -157,27 +157,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
             }
 
-            // FIX: Rewrote dot rendering logic to be more robust and handle null values.
-            const total = parseInt(table.total_spots, 10);
-            const filled = parseInt(table.spots_filled, 10);
-            const minRaw = parseInt(table.min_spots, 10);
-            
-            const totalSafe = isNaN(total) ? 0 : total;
-            const filledSafe = isNaN(filled) ? 0 : filled;
-            let min = isNaN(minRaw) ? totalSafe : minRaw;
-            if (min <= 0) min = totalSafe;
-            
+            // Robust dot rendering that tolerates nulls
+            const totalRaw  = Number(table.total_spots);
+            const filledRaw = Number(table.spots_filled);
+            const minRaw    = Number(table.min_spots);
+
+            const filled = Number.isFinite(filledRaw) ? Math.max(0, filledRaw) : 0;
+
+            // Prefer explicit total; else fall back to min; else to filled (at least 1 if there's data)
+            let total = Number.isFinite(totalRaw) ? totalRaw
+                    : Number.isFinite(minRaw)  ? minRaw
+                    : (filled > 0 ? filled : 0);
+
+            // Derive a sane min
+            let min = Number.isFinite(minRaw) ? minRaw : Math.max(0, Math.min(total, filled));
+
+            // Clamp relationships
+            total = Math.max(total, min, filled);
+            min   = Math.min(min, total);
+
+            // Build dots
             let dots = [];
-            for (let i = 0; i < totalSafe; i++) {
-                if (i < filledSafe) {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`); // orange
-                } else if (i < min) {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`); // dark gray
-                } else {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`); // light gray
-                }
+            for (let i = 0; i < total; i++) {
+            if (i < filled) {
+                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);     // filled
+            } else if (i < min) {
+                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);  // minimum
+            } else {
+                dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);         // extra capacity
             }
+            }
+
             const spotsIndicatorHTML = dots.join('');
+
 
             console.log({
               tableId: table.id,
