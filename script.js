@@ -494,31 +494,26 @@ const cardContent = document.createElement('div');
 
                 } else { 
                     localStorage.setItem('supdinner_user_id', data.userId);
-                    const functionName = signupAction === 'join' ? 'join-table' : 'join-waitlist';
-                    const { error: actionError } = await supabaseClient.functions.invoke(functionName, {
-                        body: {
-                            tableId: selectedTableId,
-                            userId: data.userId
-                        }
-                    });
 
-                    if (actionError) throw actionError;
-
-                    // === Collateral hold logic (null-safe) ===
+                    // === Collateral hold logic (run BEFORE join) ===
                     if (signupAction === 'join') {
-                        // Use the active tab’s date (you already manage it in renderTabs/handleTabClick)
-                        // If for any reason it's missing, treat as 0 days (i.e., hold now).
+                        // We will perform the actual join only AFTER Stripe succeeds:
+                        pendingPostStripeAction = async () => {
+                            const { error: actionError } = await supabaseClient.functions.invoke('join-table', {
+                                body: { tableId: selectedTableId, userId: data.userId }
+                            });
+                            if (actionError) throw actionError;
+                        };
+
+                        // Use the active tab’s date; fall back to “hold now”
                         const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
 
-                        // Get collateral if your schema has it; otherwise default to $10
+                        // Pull collateral or default to $10
                         const { data: t } = await supabaseClient.from('tables')
                             .select('id, collateral_cents')
                             .eq('id', selectedTableId)
                             .maybeSingle();
-
-                        const collateralCents = (t && Number.isFinite(t.collateral_cents))
-                            ? t.collateral_cents
-                            : 1000; // $10 default
+                        const collateralCents = (t && Number.isFinite(t.collateral_cents)) ? t.collateral_cents : 1000;
 
                         let daysDiff = 0;
                         if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
@@ -526,29 +521,39 @@ const cardContent = document.createElement('div');
                             daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
                         }
 
-                        // Stripe config guard: don’t crash if pk is missing during early tests
                         const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
-
                         if (!stripeReady) {
-                            console.warn('Stripe not configured; skipping collateral flow for this join.');
-                        } else {
-                            if (daysDiff > 7) {
-                                const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
-                                    body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                                });
-                                if (siErr) throw siErr;
-                                await confirmSetupIntent(siRes.client_secret);
-                            } else {
-                                const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
-                                    body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                                });
-                                if (piErr) throw piErr;
-                                await confirmPaymentIntent(piRes.client_secret);
-                            }
+                            // Stripe not configured: bail out of guarded flow
+                            console.warn('Stripe not configured; performing unguarded join.');
+                            await pendingPostStripeAction(); // join without collateral (test fallback)
+                            pendingPostStripeAction = null;
+                            showSuccessStep();
+                            return;
                         }
+
+                        if (daysDiff > 7) {
+                            const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
+                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            });
+                            if (siErr) throw siErr;
+                            await confirmSetupIntent(siRes.client_secret);
+                        } else {
+                            const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
+                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            });
+                            if (piErr) throw piErr;
+                            await confirmPaymentIntent(piRes.client_secret);
+                        }
+                    } else {
+                        // waitlist requires no collateral; proceed immediately
+                        const { error: actionError } = await supabaseClient.functions.invoke('join-waitlist', {
+                            body: { tableId: selectedTableId, userId: data.userId }
+                        });
+                        if (actionError) throw actionError;
+                        showSuccessStep();
                     }
-                    // === End collateral hold logic ===            
-                    // showSuccessStep();  // <- you removed or commented this per last step
+                    // === End collateral logic ===
+
                 }
 
 
@@ -692,6 +697,10 @@ const cardContent = document.createElement('div');
             cardErrors.textContent = '';
             pendingClientSecret = null;
             pendingMode = null;
+            
+            // action to run after a successful Stripe confirm
+            let pendingPostStripeAction = null;
+
         }, 300);
     }
 
@@ -828,11 +837,21 @@ const cardContent = document.createElement('div');
                 return;
             }
 
-            // Success: close modal and refresh UI
+            // Success: close modal then perform the deferred join (if any)
             closeCardModalModalOnly();
+
+            try {
+                if (typeof pendingPostStripeAction === 'function') {
+                    await pendingPostStripeAction();
+                }
+            } finally {
+                pendingPostStripeAction = null;
+            }
+
+            // Refresh UI and show success
             await refreshData();
-            // If we were in the join modal flow, show the success step
             showSuccessStep();
+
 
         } catch (err) {
             cardErrors.textContent = err.message || 'Unexpected error.';
