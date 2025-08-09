@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- STRIPE INIT ---
-    const STRIPE_PUBLISHABLE_KEY = 'pk_live_51RoP0uP6irEQ7yILvYBuYB0jrRZtcl5iO0rqi5ozyIMrXpPIHdGVoFr0TWvJbjkZZXGkv6qeUewCS173UQ1qaMLh00juf0Lay2'; // TODO: replace with your real publishable key
+    const STRIPE_PUBLISHABLE_KEY = 'pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa'; // TODO: replace with your real publishable key
     let stripe = null;
     let elements = null;
     let cardElement = null;
@@ -413,8 +413,62 @@ const cardContent = document.createElement('div');
                 const functionName = signupAction === 'join' ? 'signup-and-join' : 'signup-and-waitlist';
                 const { data, error } = await supabaseClient.functions.invoke(functionName, { body: formData });
                 if (error) throw error;
+
                 localStorage.setItem('supdinner_user_id', data.userId);
+
+                // Ensure Stripe customer exists for this brand-new user
+                try {
+                await supabaseClient.functions.invoke('stripe-create-customer', {
+                    body: { userId: data.userId }
+                });
+                } catch (err) {
+                console.error('Error ensuring Stripe customer (new user):', err);
+                }
+
+                // Only require collateral for real join, not waitlist
+                if (signupAction === 'join') {
+                // Use the active tab’s date; fall back to “hold now” if absent
+                const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
+
+                // Pull collateral amount (fallback $10)
+                const { data: t } = await supabaseClient.from('tables')
+                    .select('id, collateral_cents')
+                    .eq('id', selectedTableId)
+                    .maybeSingle();
+
+                const collateralCents = (t && Number.isFinite(t.collateral_cents)) ? t.collateral_cents : 1000;
+
+                let daysDiff = 0;
+                if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
+                    const now = new Date();
+                    daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+                }
+
+                // Guard: skip if Stripe not configured
+                const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
+                if (stripeReady) {
+                    if (daysDiff > 7) {
+                    const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
+                        body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                    });
+                    if (siErr) throw siErr;
+                    await confirmSetupIntent(siRes.client_secret);
+                    } else {
+                    const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
+                        body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                    });
+                    if (piErr) throw piErr;
+                    await confirmPaymentIntent(piRes.client_secret);
+                    }
+                } else {
+                    console.warn('Stripe not configured; skipping collateral flow for new user join.');
+                    showSuccessStep(); // fallback so the user still advances
+                }
+                } else {
+                // Waitlist path: no collateral
                 showSuccessStep();
+                }
+
             } catch(error) {
                 formError1.textContent = `Error: ${error.message}`;
                 formError1.classList.remove('hidden');
