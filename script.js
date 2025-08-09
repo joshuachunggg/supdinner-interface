@@ -1,4 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- STRIPE INIT ---
+    const STRIPE_PUBLISHABLE_KEY = 'pk_live_51RoP0uP6irEQ7yILvYBuYB0jrRZtcl5iO0rqi5ozyIMrXpPIHdGVoFr0TWvJbjkZZXGkv6qeUewCS173UQ1qaMLh00juf0Lay2'; // TODO: replace with your real publishable key
+    let stripe = null;
+    let elements = null;
+    let cardElement = null;
+
+    // state for current confirmation
+    let pendingClientSecret = null;
+    let pendingMode = null; // 'setup' or 'payment'
 
     // --- SUPABASE CLIENT INITIALIZATION ---
     const SUPABASE_URL = 'https://ennlvlcogzowropkwbiu.supabase.co'; // PASTE YOUR PROJECT URL HERE
@@ -71,6 +80,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const requestSubmitButton = document.getElementById('request-submit-button');
     const closeRequestModal1 = document.getElementById('close-request-modal-1');
     const closeRequestModal2 = document.getElementById('close-request-modal-2');
+
+    // Card Modal elements (Stripe)
+    const cardModal = document.getElementById('card-modal');
+    const cardModalContent = document.getElementById('card-modal-content');
+    const cardForm = document.getElementById('card-form');
+    const cardElementMount = document.getElementById('card-element');
+    const cardErrors = document.getElementById('card-errors');
+    const cardConfirmButton = document.getElementById('card-confirm-button');
+    const closeCardModal = document.getElementById('close-card-modal');
 
     // Forms and buttons
     const userInfoForm = document.getElementById('user-info-form');
@@ -430,9 +448,39 @@ const cardContent = document.createElement('div');
                     });
 
                     if (actionError) throw actionError;
-                    
-                    showSuccessStep();
+
+                    // === Collateral hold logic ===
+                    // Fetch table to decide strategy
+                    const { data: t } = await supabaseClient.from('tables')
+                        .select('id, date, time, neighborhood, collateral_cents')
+                        .eq('id', selectedTableId).single();
+
+                    const collateralCents = t?.collateral_cents ?? 1000; // fallback to $10
+
+                    const dinnerDate = new Date(`${t.date}T00:00:00`);
+                    const now = new Date();
+                    const daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+
+                    if (daysDiff > 7) {
+                        const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                        });
+                        if (siErr) throw siErr;
+
+                        // Open Stripe card modal to confirm the SetupIntent
+                        await confirmSetupIntent(siRes.client_secret);
+
+                    } else {
+                        const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                        });
+                        if (piErr) throw piErr;
+
+                        // Open Stripe card modal to confirm the PaymentIntent
+                        await confirmPaymentIntent(piRes.client_secret);
+                    }
                 }
+
             } catch (error) {
                 formError1.textContent = `Error: ${error.message}`;
                 formError1.classList.remove('hidden');
@@ -554,6 +602,28 @@ const cardContent = document.createElement('div');
         }, 300);
     }
 
+    // --- STRIPE CARD MODAL CONTROLS ---
+    function openCardModal() {
+        cardModal.classList.remove('hidden');
+        setTimeout(() => {
+            cardModal.classList.remove('opacity-0');
+            cardModalContent.classList.remove('scale-95');
+        }, 10);
+    }
+
+    function closeCardModalModalOnly() {
+        cardModal.classList.add('opacity-0');
+        cardModalContent.classList.add('scale-95');
+        setTimeout(() => {
+            cardModal.classList.add('hidden');
+            if (cardForm) cardForm.reset();
+            cardErrors.classList.add('hidden');
+            cardErrors.textContent = '';
+            pendingClientSecret = null;
+            pendingMode = null;
+        }, 300);
+    }
+
     function showModalStep(step, modal) {
         const steps = modal.querySelectorAll('[id^="modal-step-"], [id^="request-step-"]');
         steps.forEach(stepEl => {
@@ -579,6 +649,9 @@ const cardContent = document.createElement('div');
 
     closeLoginModal.addEventListener('click', () => closeModal(loginModal));
     loginModal.addEventListener('click', (e) => { if (e.target === loginModal) closeModal(loginModal); });
+
+    closeCardModal.addEventListener('click', () => closeCardModalModalOnly());
+    cardModal.addEventListener('click', (e) => { if (e.target === cardModal) closeCardModalModalOnly(); });
 
     closeRequestModal1.addEventListener('click', () => closeModal(requestModal));
     closeRequestModal2.addEventListener('click', () => closeModal(requestModal));
@@ -611,6 +684,14 @@ const cardContent = document.createElement('div');
                 userStatusDiv.classList.remove('hidden');
                 document.getElementById('request-name').value = profile.first_name;
                 document.getElementById('request-phone').value = profile.phone_number;
+                // Ensure this user has a Stripe customer record
+                try {
+                    await supabaseClient.functions.invoke('stripe-create-customer', {
+                        body: { userId: currentUserState.userId }
+                    });
+                } catch (err) {
+                    console.error('Error ensuring Stripe customer:', err);
+                }
             } else {
                 localStorage.removeItem('supdinner_user_id');
                 currentUserState = { isLoggedIn: false, userId: null, joinedTableId: null, waitlistedTableIds: [], isSuspended: false, suspensionEndDate: null };
@@ -627,8 +708,71 @@ const cardContent = document.createElement('div');
         }
     };
 
+    async function initStripeIfNeeded() {
+        if (!stripe) {
+            stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+            elements = stripe.elements();
+            cardElement = elements.create('card');
+            cardElement.mount(cardElementMount);
+        }
+    }
+    async function confirmSetupIntent(clientSecret) {
+        await initStripeIfNeeded();
+        pendingClientSecret = clientSecret;
+        pendingMode = 'setup';
+        openCardModal();
+    }
+
+    async function confirmPaymentIntent(clientSecret) {
+        await initStripeIfNeeded();
+        pendingClientSecret = clientSecret;
+        pendingMode = 'payment';
+        openCardModal();
+    }
+
+    cardForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!pendingClientSecret || !pendingMode) return;
+
+        cardConfirmButton.disabled = true;
+        cardErrors.classList.add('hidden');
+        cardErrors.textContent = '';
+
+        try {
+            let result;
+            if (pendingMode === 'setup') {
+                result = await stripe.confirmCardSetup(pendingClientSecret, {
+                    payment_method: { card: cardElement }
+                });
+            } else {
+                result = await stripe.confirmCardPayment(pendingClientSecret, {
+                    payment_method: { card: cardElement }
+                });
+            }
+
+            if (result.error) {
+                cardErrors.textContent = result.error.message || 'Card confirmation failed.';
+                cardErrors.classList.remove('hidden');
+                cardConfirmButton.disabled = false;
+                return;
+            }
+
+            // Success: close modal and refresh UI
+            closeCardModalModalOnly();
+            await refreshData();
+            // If we were in the join modal flow, show the success step
+            showSuccessStep();
+
+        } catch (err) {
+            cardErrors.textContent = err.message || 'Unexpected error.';
+            cardErrors.classList.remove('hidden');
+            cardConfirmButton.disabled = false;
+        }
+    });
+
     const initialize = async () => {
         try {
+            await initStripeIfNeeded();
             const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
             if (datesError) throw datesError;
 

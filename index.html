@@ -36,6 +36,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://js.stripe.com/v3"></script>
 </head>
 <body class="bg-brand-bg text-brand-text">
 
@@ -284,7 +285,25 @@
             </button>
         </div>
     </div>
-    
+    <!-- Modal for Card Entry (Stripe) -->
+    <div id="card-modal" class="modal-backdrop fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 hidden opacity-0">
+      <div id="card-modal-content" class="modal-content bg-white rounded-xl shadow-2xl w-full max-w-md transform scale-95">
+        <div class="p-6">
+          <h2 class="text-2xl font-bold text-brand-text font-heading">Add a card</h2>
+          <p class="text-gray-600 mt-1 font-sans">We place a temporary hold for no‑show protection. If you attend or cancel on time, it’s released.</p>
+        </div>
+        <form id="card-form" class="px-6 pb-6 space-y-4 font-sans">
+          <div id="card-element" class="p-3 border border-gray-300 rounded-md"></div>
+          <div id="card-errors" class="text-red-600 text-sm hidden"></div>
+          <button id="card-confirm-button" type="submit" class="w-full flex justify-center py-3 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-brand-button hover:bg-brand-button-hover font-heading disabled:opacity-50 disabled:cursor-not-allowed">
+            Confirm
+          </button>
+        </form>
+        <div class="bg-gray-50 px-6 py-4 rounded-b-xl">
+          <button type="button" id="close-card-modal" class="text-sm text-gray-600 hover:text-gray-800 font-sans">Cancel</button>
+        </div>
+      </div>
+    </div>
     <script src="script.js" defer></script>
 </body>
 </html>
