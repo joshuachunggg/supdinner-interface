@@ -730,73 +730,85 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- INITIALIZATION & REFRESH LOGIC ---
     async function refreshData() {
-        const localUserId = localStorage.getItem('supdinner_user_id');
+    const localUserId = localStorage.getItem('supdinner_user_id');
 
-        if (localUserId) {
-            loginButton.classList.add('hidden');
-            // Only consider future signups
-            const nowIso = new Date().toISOString();
-            const { data: upcoming } = await supabaseClient
-            .from('signups')
-            .select('table_id, tables!inner(dinner_date)')
-            .eq('user_id', localUserId)
-            .gte('tables.dinner_date', nowIso)
-            .order('tables.dinner_date', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+    if (localUserId) {
+        loginButton.classList.add('hidden');
 
-            const { data: waitlists } = await supabaseClient
-            .from('waitlists')
-            .select('table_id')
-            .eq('user_id', localUserId);
+        // 1) profile
+        const { data: profile, error: pErr } = await supabaseClient
+        .from('users')
+        .select('first_name, is_suspended, suspension_end_date, phone_number')
+        .eq('id', localUserId)
+        .single();
 
-            currentUserState = {
-            isLoggedIn: true,
-            userId: localUserId,
-            joinedTableId: upcoming ? upcoming.table_id : null,
-            waitlistedTableIds: waitlists ? waitlists.map(w => w.table_id) : [],
-            isSuspended: profile.is_suspended,
-            suspensionEndDate: profile.suspension_end_date,
-            name: profile.first_name,
-            phone: profile.phone_number
-            };
-
-            if (profile) {
-                currentUserState = {
-                    isLoggedIn: true,
-                    userId: localUserId,
-                    joinedTableId: signup ? signup.table_id : null,
-                    waitlistedTableIds: waitlists ? waitlists.map(w => w.table_id) : [],
-                    isSuspended: profile.is_suspended,
-                    suspensionEndDate: profile.suspension_end_date,
-                    name: profile.first_name,
-                    phone: profile.phone_number
-                };
-                userGreetingSpan.textContent = `Welcome, ${profile.first_name}!`;
-                userStatusDiv.classList.remove('hidden');
-                document.getElementById('request-name').value = profile.first_name;
-                document.getElementById('request-phone').value = profile.phone_number;
-                // Ensure this user has a Stripe customer record
-                try {
-                    await supabaseClient.functions.invoke('stripe-create-customer', {
-                        body: { userId: currentUserState.userId }
-                    });
-                } catch (err) {
-                    console.error('Error ensuring Stripe customer:', err);
-                }
-            } else {
-                localStorage.removeItem('supdinner_user_id');
-                currentUserState = { isLoggedIn: false, userId: null, joinedTableId: null, waitlistedTableIds: [], isSuspended: false, suspensionEndDate: null };
-                userStatusDiv.classList.add('hidden');
-            }
-        } else {
-            loginButton.classList.remove('hidden');
-            currentUserState = { isLoggedIn: false, userId: null, joinedTableId: null, waitlistedTableIds: [], isSuspended: false, suspensionEndDate: null };
-            userStatusDiv.classList.add('hidden');
-        }
-        
+        if (pErr || !profile) {
+        // session is stale; clear it
+        localStorage.removeItem('supdinner_user_id');
+        currentUserState = {
+            isLoggedIn: false, userId: null, joinedTableId: null,
+            waitlistedTableIds: [], isSuspended: false, suspensionEndDate: null
+        };
+        userStatusDiv.classList.add('hidden');
         if (activeDate) await renderTables(activeDate);
-    };
+        return;
+        }
+
+        // 2) only consider FUTURE signup (fixes the “cooldown” issue)
+        const nowIso = new Date().toISOString();
+        const { data: upcoming } = await supabaseClient
+        .from('signups')
+        .select('table_id, tables!inner(dinner_date)')
+        .eq('user_id', localUserId)
+        .gte('tables.dinner_date', nowIso)
+        .order('tables.dinner_date', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+        // 3) waitlists
+        const { data: waitlists } = await supabaseClient
+        .from('waitlists')
+        .select('table_id')
+        .eq('user_id', localUserId);
+
+        // 4) set state + UI
+        currentUserState = {
+        isLoggedIn: true,
+        userId: localUserId,
+        joinedTableId: upcoming ? upcoming.table_id : null,
+        waitlistedTableIds: waitlists ? waitlists.map(w => w.table_id) : [],
+        isSuspended: profile.is_suspended,
+        suspensionEndDate: profile.suspension_end_date,
+        name: profile.first_name,
+        phone: profile.phone_number
+        };
+
+        userGreetingSpan.textContent = `Welcome, ${profile.first_name}!`;
+        userStatusDiv.classList.remove('hidden');
+        document.getElementById('request-name').value = profile.first_name || '';
+        document.getElementById('request-phone').value = profile.phone_number || '';
+
+        // 5) make sure Stripe customer exists
+        try {
+        await supabaseClient.functions.invoke('stripe-create-customer', {
+            body: { userId: currentUserState.userId }
+        });
+        } catch (err) {
+        console.error('Error ensuring Stripe customer:', err);
+        }
+
+    } else {
+        loginButton.classList.remove('hidden');
+        currentUserState = {
+        isLoggedIn: false, userId: null, joinedTableId: null,
+        waitlistedTableIds: [], isSuspended: false, suspensionEndDate: null
+        };
+        userStatusDiv.classList.add('hidden');
+    }
+
+    if (activeDate) await renderTables(activeDate);
+    }
+
 
     async function initStripeIfNeeded() {
         if (!stripe) {
