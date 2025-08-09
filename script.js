@@ -428,17 +428,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
                     if (stripeReady) {
                         if (daysDiff > 7) {
+                            // setup path
                             const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
-                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
-                            if (siErr) throw siErr;
+                            if (siErr || !siRes?.client_secret) {
+                            console.error('No client_secret from setup intent', siErr, siRes);
+                            alert('Payment setup failed. Please try again.');
+                            return;
+                            }
                             console.log('[Stripe] setup client_secret', siRes.client_secret);
                             await confirmSetupIntent(siRes.client_secret);
                         } else {
+                            // payment path
                             const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
-                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
-                            if (piErr) throw piErr;
+                            if (piErr || !piRes?.client_secret) {
+                            console.error('No client_secret from payment intent', piErr, piRes);
+                            alert('Card hold failed. Please try again.');
+                            return;
+                            }
                             console.log('[Stripe] payment client_secret', piRes.client_secret);
                             await confirmPaymentIntent(piRes.client_secret);
                         }
@@ -527,17 +537,27 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
 
                         if (daysDiff > 7) {
+                            // setup path
                             const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
-                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
-                            if (siErr) throw siErr;
+                            if (siErr || !siRes?.client_secret) {
+                            console.error('No client_secret from setup intent', siErr, siRes);
+                            alert('Payment setup failed. Please try again.');
+                            return;
+                            }
                             console.log('[Stripe] setup client_secret', siRes.client_secret);
                             await confirmSetupIntent(siRes.client_secret);
                         } else {
+                            // payment path
                             const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
-                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
-                            if (piErr) throw piErr;
+                            if (piErr || !piRes?.client_secret) {
+                            console.error('No client_secret from payment intent', piErr, piRes);
+                            alert('Card hold failed. Please try again.');
+                            return;
+                            }
                             console.log('[Stripe] payment client_secret', piRes.client_secret);
                             await confirmPaymentIntent(piRes.client_secret);
                         }
