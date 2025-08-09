@@ -437,6 +437,7 @@ const cardContent = document.createElement('div');
                     newUserFields.classList.remove('hidden');
                     joinSubmitButton.textContent = signupAction === 'join' ? 'Confirm & Join Table' : 'Confirm & Join Waitlist';
                     joinSubmitButton.disabled = !disclaimerCheckbox.checked;
+
                 } else { 
                     localStorage.setItem('supdinner_user_id', data.userId);
                     const functionName = signupAction === 'join' ? 'join-table' : 'join-waitlist';
@@ -449,37 +450,53 @@ const cardContent = document.createElement('div');
 
                     if (actionError) throw actionError;
 
-                    // === Collateral hold logic ===
-                    // Fetch table to decide strategy
-                    const { data: t } = await supabaseClient.from('tables')
-                        .select('id, date, time, neighborhood, collateral_cents')
-                        .eq('id', selectedTableId).single();
+                    // === Collateral hold logic (null-safe) ===
+                    if (signupAction === 'join') {
+                        // Use the active tab’s date (you already manage it in renderTabs/handleTabClick)
+                        // If for any reason it's missing, treat as 0 days (i.e., hold now).
+                        const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
 
-                    const collateralCents = t?.collateral_cents ?? 1000; // fallback to $10
+                        // Get collateral if your schema has it; otherwise default to $10
+                        const { data: t } = await supabaseClient.from('tables')
+                            .select('id, collateral_cents')
+                            .eq('id', selectedTableId)
+                            .maybeSingle();
 
-                    const dinnerDate = new Date(`${t.date}T00:00:00`);
-                    const now = new Date();
-                    const daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+                        const collateralCents = (t && Number.isFinite(t.collateral_cents))
+                            ? t.collateral_cents
+                            : 1000; // $10 default
 
-                    if (daysDiff > 7) {
-                        const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
-                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                        });
-                        if (siErr) throw siErr;
+                        let daysDiff = 0;
+                        if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
+                            const now = new Date();
+                            daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+                        }
 
-                        // Open Stripe card modal to confirm the SetupIntent
-                        await confirmSetupIntent(siRes.client_secret);
+                        // Stripe config guard: don’t crash if pk is missing during early tests
+                        const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
 
-                    } else {
-                        const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
-                            body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                        });
-                        if (piErr) throw piErr;
-
-                        // Open Stripe card modal to confirm the PaymentIntent
-                        await confirmPaymentIntent(piRes.client_secret);
+                        if (!stripeReady) {
+                            console.warn('Stripe not configured; skipping collateral flow for this join.');
+                        } else {
+                            if (daysDiff > 7) {
+                                const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
+                                    body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                                });
+                                if (siErr) throw siErr;
+                                await confirmSetupIntent(siRes.client_secret);
+                            } else {
+                                const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
+                                    body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                                });
+                                if (piErr) throw piErr;
+                                await confirmPaymentIntent(piRes.client_secret);
+                            }
+                        }
                     }
+                    // === End collateral hold logic ===            
+                    // showSuccessStep();  // <- you removed or commented this per last step
                 }
+
 
             } catch (error) {
                 formError1.textContent = `Error: ${error.message}`;
