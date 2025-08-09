@@ -1,18 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- STRIPE INIT ---
-    const STRIPE_PUBLISHABLE_KEY = 'pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa'; // TODO: replace with your real publishable key
+    const STRIPE_PUBLISHABLE_KEY = 'pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa'; // test key (leave as-is)
+    const COLLATERAL_CENTS_DEFAULT = 1000; // $10 hold until we add a DB column
     let stripe = null;
     let elements = null;
     let cardElement = null;
 
-    // state for current confirmation
+    // state for Stripe modal confirmation
     let pendingClientSecret = null;
     let pendingMode = null; // 'setup' or 'payment'
+    // action to run after a successful Stripe confirm (e.g., join-table)
+    let pendingPostStripeAction = null;
 
     // --- SUPABASE CLIENT INITIALIZATION ---
-    const SUPABASE_URL = 'https://ennlvlcogzowropkwbiu.supabase.co'; // PASTE YOUR PROJECT URL HERE
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc'; // PASTE YOUR ANON PUBLIC KEY HERE
-    
+    const SUPABASE_URL = 'https://ennlvlcogzowropkwbiu.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc';
     if (SUPABASE_URL.includes('your-project-ref') || SUPABASE_ANON_KEY.includes('your-long-anon-key')) {
         const container = document.querySelector('.container');
         container.innerHTML = `<div class="text-center p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
@@ -21,7 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
         return;
     }
-
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // --- GLOBAL STATE ---
@@ -175,51 +176,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
             }
 
-            // FIX: Robust dot rendering that tolerates null/undefined and keeps relationships sane
+            // Robust dot rendering
             const totalRaw  = Number(table.total_spots);
             const filledRaw = Number(table.spots_filled);
             const minRaw    = Number(table.min_spots);
-
             const filled = Number.isFinite(filledRaw) ? Math.max(0, filledRaw) : 0;
-
-            // Prefer explicit total; else fall back to min; else to filled; else 0
-            let total = Number.isFinite(totalRaw) ? totalRaw
-                       : Number.isFinite(minRaw)  ? minRaw
-                       : (filled > 0 ? filled : 0);
-
-            // Derive a sane min
-            let min = Number.isFinite(minRaw) ? minRaw : Math.max(0, Math.min(total, filled));
-
-            // Clamp relationships
+            let total = Number.isFinite(totalRaw) ? totalRaw : Number.isFinite(minRaw) ? minRaw : (filled > 0 ? filled : 0);
+            let min   = Number.isFinite(minRaw) ? minRaw : Math.max(0, Math.min(total, filled));
             total = Math.max(total, min, filled);
             min   = Math.min(min, total);
 
-            // Build dots
             let dots = [];
             for (let i = 0; i < total; i++) {
                 if (i < filled) {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);     // filled
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`);
                 } else if (i < min) {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);  // minimum
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`);
                 } else {
-                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);         // extra capacity
+                    dots.push(`<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`);
                 }
             }
-
             const spotsIndicatorHTML = dots.join('');
-
-            // Safe displays
             const totalDisplay  = Number.isFinite(totalRaw)  ? totalRaw  : total;
             const filledDisplay = Number.isFinite(filledRaw) ? filledRaw : filled;
 
-            console.log({
-              tableId: table.id,
-              total,
-              filled,
-              min,
-              dotsLength: dots.length
-            });
-const cardContent = document.createElement('div');
+            const cardContent = document.createElement('div');
             cardContent.innerHTML = `
                 ${bannerHTML}
                 <div class="p-6">
@@ -235,8 +216,7 @@ const cardContent = document.createElement('div');
                                 ${themeHTML ? `<div class="text-gray-400">&bull;</div> ${themeHTML}` : ''}
                             </div>
                         </div>
-                        <div class="mt-4 sm:mt-0 flex-shrink-0" id="button-container-${table.id}">
-                        </div>
+                        <div class="mt-4 sm:mt-0 flex-shrink-0" id="button-container-${table.id}"></div>
                     </div>
                     <div class="mt-4 pt-4 border-t border-gray-200">
                         <div class="flex items-center justify-between text-sm">
@@ -249,7 +229,6 @@ const cardContent = document.createElement('div');
                     </div>
                 </div>
             `;
-            
             card.appendChild(cardContent);
             card.querySelector(`#button-container-${table.id}`).appendChild(button);
             tablesContainer.appendChild(card);
@@ -266,9 +245,7 @@ const cardContent = document.createElement('div');
         button.textContent = text;
         const baseClasses = ['supdinner-button'];
         button.classList.add(...baseClasses, ...classes);
-        if (disabled) {
-            button.disabled = true;
-        }
+        if (disabled) button.disabled = true;
         return button;
     }
     
@@ -283,18 +260,12 @@ const cardContent = document.createElement('div');
         dates.forEach((dateString, index) => {
             const date = new Date(dateString + 'T00:00:00'); 
             const currentDayIndex = date.getDay();
-            
-            if (index > 0 && currentDayIndex < previousDayIndex) {
-                tabsHtml += `<div class="week-separator"></div>`;
-            }
-            
+            if (index > 0 && currentDayIndex < previousDayIndex) tabsHtml += `<div class="week-separator"></div>`;
             const dayName = dayNames[currentDayIndex];
             const monthName = monthNames[date.getMonth()];
             const dayOfMonth = date.getDate();
-
             const isActive = index === 0;
             if (isActive) activeDate = dateString;
-            
             tabsHtml += `
                 <a href="#" data-date="${dateString}" class="day-tab whitespace-nowrap text-center py-3 px-1 ${isActive ? 'border-b-2 border-brand-accent text-brand-accent' : 'border-b-2 border-transparent text-gray-500 hover:text-brand-accent hover:border-brand-accent/50'}">
                     <div class="font-heading">${dayName}</div>
@@ -327,7 +298,6 @@ const cardContent = document.createElement('div');
     const handleJoinClick = async (e) => {
         selectedTableId = parseInt(e.target.dataset.tableId);
         signupAction = 'join';
-        
         const { data: table } = await supabaseClient.from('tables').select('time, neighborhood').eq('id', selectedTableId).single();
         if (table) {
             modalTableDetails.innerHTML = `You're joining the <strong>${table.time}</strong> dinner in <strong>${table.neighborhood}</strong>.`;
@@ -393,6 +363,7 @@ const cardContent = document.createElement('div');
         joinSubmitButton.disabled = true;
 
         if (isNewUserFlow) {
+            // NEW USER
             const formData = {
                 firstName: document.getElementById('first-name').value,
                 phoneNumber: document.getElementById('phone-number').value,
@@ -401,7 +372,6 @@ const cardContent = document.createElement('div');
                 marketingOptIn: document.getElementById('marketing-checkbox').checked,
                 tableId: selectedTableId
             };
-            
             if (!formData.firstName || !formData.ageRange) {
                 formError1.textContent = "Please fill out all your details.";
                 formError1.classList.remove('hidden');
@@ -418,58 +388,67 @@ const cardContent = document.createElement('div');
 
                 // Ensure Stripe customer exists for this brand-new user
                 try {
-                await supabaseClient.functions.invoke('stripe-create-customer', {
-                    body: { userId: data.userId }
-                });
+                    await supabaseClient.functions.invoke('stripe-create-customer', {
+                        body: { userId: data.userId }
+                    });
                 } catch (err) {
-                console.error('Error ensuring Stripe customer (new user):', err);
+                    console.error('Error ensuring Stripe customer (new user):', err);
                 }
 
                 // Only require collateral for real join, not waitlist
                 if (signupAction === 'join') {
-                // Use the active tab’s date; fall back to “hold now” if absent
-                const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
+                    if (!selectedTableId) {
+                        console.error('[Join flow] selectedTableId is missing. Not calling Supabase/Stripe.');
+                        alert('Sorry—could not determine which table you selected. Please close and try again.');
+                        return;
+                    }
 
-                // Pull collateral amount (fallback $10)
-                console.log('[Join flow] selectedTableId before collateral fetch:', selectedTableId);
-                const { data: t } = await supabaseClient.from('tables')
-                    .select('id, collateral_cents')
-                    .eq('id', selectedTableId)
-                    .maybeSingle();
+                    // Get dinner_date from DB; fallback to activeDate; else hold now
+                    const { data: t, error: tErr } = await supabaseClient.from('tables')
+                        .select('id, dinner_date')
+                        .eq('id', selectedTableId)
+                        .maybeSingle();
+                    if (tErr) console.error('[Join flow] failed to load table row:', tErr);
 
-                const collateralCents = (t && Number.isFinite(t.collateral_cents)) ? t.collateral_cents : 1000;
+                    let dinnerDate = null;
+                    if (t?.dinner_date) {
+                        dinnerDate = new Date(t.dinner_date);
+                    } else if (activeDate) {
+                        dinnerDate = new Date(`${activeDate}T00:00:00`);
+                    }
 
-                let daysDiff = 0;
-                if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
-                    const now = new Date();
-                    daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-                }
+                    const collateralCents = COLLATERAL_CENTS_DEFAULT;
 
-                // Guard: skip if Stripe not configured
-                const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
-                if (stripeReady) {
-                    if (daysDiff > 7) {
-                    const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
-                        body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                    });
-                    if (siErr) throw siErr;
-                    console.log('[Stripe] setup client_secret', siRes.client_secret);
-                    await confirmSetupIntent(siRes.client_secret);
+                    let daysDiff = 0;
+                    if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
+                        const now = new Date();
+                        daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+                    }
+
+                    const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
+                    if (stripeReady) {
+                        if (daysDiff > 7) {
+                            const { data: siRes, error: siErr } = await supabaseClient.functions.invoke('stripe-create-setup-intent', {
+                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            });
+                            if (siErr) throw siErr;
+                            console.log('[Stripe] setup client_secret', siRes.client_secret);
+                            await confirmSetupIntent(siRes.client_secret);
+                        } else {
+                            const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
+                                body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
+                            });
+                            if (piErr) throw piErr;
+                            console.log('[Stripe] payment client_secret', piRes.client_secret);
+                            await confirmPaymentIntent(piRes.client_secret);
+                        }
                     } else {
-                    const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
-                        body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
-                    });
-                    if (piErr) throw piErr;
-                    console.log('[Stripe] payment client_secret', piRes.client_secret);
-                    await confirmPaymentIntent(piRes.client_secret);
+                        console.warn('Stripe not configured; skipping collateral flow for new user join.');
+                        showSuccessStep();
                     }
                 } else {
-                    console.warn('Stripe not configured; skipping collateral flow for new user join.');
-                    showSuccessStep(); // fallback so the user still advances
-                }
-                } else {
-                // Waitlist path: no collateral
-                showSuccessStep();
+                    // Waitlist path: no collateral
+                    showSuccessStep();
                 }
 
             } catch(error) {
@@ -477,7 +456,9 @@ const cardContent = document.createElement('div');
                 formError1.classList.remove('hidden');
                 joinSubmitButton.disabled = false;
             }
+
         } else {
+            // EXISTING USER
             const phoneNumber = document.getElementById('phone-number').value;
             if (!phoneNumber) {
                 formError1.textContent = "Please enter your phone number.";
@@ -489,18 +470,24 @@ const cardContent = document.createElement('div');
                 const { data, error } = await supabaseClient.functions.invoke('get-user-by-phone', { body: { phoneNumber } });
                 if (error) throw error;
 
-                if (!data.userId) { 
+                if (!data.userId) {
                     isNewUserFlow = true;
                     newUserFields.classList.remove('hidden');
                     joinSubmitButton.textContent = signupAction === 'join' ? 'Confirm & Join Table' : 'Confirm & Join Waitlist';
                     joinSubmitButton.disabled = !disclaimerCheckbox.checked;
 
-                } else { 
+                } else {
                     localStorage.setItem('supdinner_user_id', data.userId);
 
                     // === Collateral hold logic (run BEFORE join) ===
                     if (signupAction === 'join') {
-                        // We will perform the actual join only AFTER Stripe succeeds:
+                        if (!selectedTableId) {
+                            console.error('[Join flow] selectedTableId is missing. Not calling Supabase/Stripe.');
+                            alert('Sorry—could not determine which table you selected. Please close and try again.');
+                            return;
+                        }
+
+                        // Defer the actual join until after Stripe succeeds
                         pendingPostStripeAction = async () => {
                             const { error: actionError } = await supabaseClient.functions.invoke('join-table', {
                                 body: { tableId: selectedTableId, userId: data.userId }
@@ -508,15 +495,21 @@ const cardContent = document.createElement('div');
                             if (actionError) throw actionError;
                         };
 
-                        // Use the active tab’s date; fall back to “hold now”
-                        const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
-
-                        // Pull collateral or default to $10
-                        const { data: t } = await supabaseClient.from('tables')
-                            .select('id, collateral_cents')
+                        // Get dinner_date from DB; fallback to activeDate
+                        const { data: t, error: tErr } = await supabaseClient.from('tables')
+                            .select('id, dinner_date')
                             .eq('id', selectedTableId)
                             .maybeSingle();
-                        const collateralCents = (t && Number.isFinite(t.collateral_cents)) ? t.collateral_cents : 1000;
+                        if (tErr) console.error('[Join flow] failed to load table row:', tErr);
+
+                        let dinnerDate = null;
+                        if (t?.dinner_date) {
+                            dinnerDate = new Date(t.dinner_date);
+                        } else if (activeDate) {
+                            dinnerDate = new Date(`${activeDate}T00:00:00`);
+                        }
+
+                        const collateralCents = COLLATERAL_CENTS_DEFAULT;
 
                         let daysDiff = 0;
                         if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
@@ -526,9 +519,8 @@ const cardContent = document.createElement('div');
 
                         const stripeReady = !!window.Stripe && STRIPE_PUBLISHABLE_KEY && !STRIPE_PUBLISHABLE_KEY.includes('replace_me');
                         if (!stripeReady) {
-                            // Stripe not configured: bail out of guarded flow
                             console.warn('Stripe not configured; performing unguarded join.');
-                            await pendingPostStripeAction(); // join without collateral (test fallback)
+                            await pendingPostStripeAction();
                             pendingPostStripeAction = null;
                             showSuccessStep();
                             return;
@@ -539,12 +531,14 @@ const cardContent = document.createElement('div');
                                 body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
                             if (siErr) throw siErr;
+                            console.log('[Stripe] setup client_secret', siRes.client_secret);
                             await confirmSetupIntent(siRes.client_secret);
                         } else {
                             const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
                                 body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                             });
                             if (piErr) throw piErr;
+                            console.log('[Stripe] payment client_secret', piRes.client_secret);
                             await confirmPaymentIntent(piRes.client_secret);
                         }
                     } else {
@@ -556,10 +550,7 @@ const cardContent = document.createElement('div');
                         showSuccessStep();
                     }
                     // === End collateral logic ===
-
                 }
-
-
             } catch (error) {
                 formError1.textContent = `Error: ${error.message}`;
                 formError1.classList.remove('hidden');
@@ -574,33 +565,21 @@ const cardContent = document.createElement('div');
         refreshData();
     });
     
-    requestTableBtn.addEventListener('click', () => {
-        openModal(requestModal);
-    });
-
-    loginButton.addEventListener('click', () => {
-        openModal(loginModal);
-    });
+    requestTableBtn.addEventListener('click', () => openModal(requestModal));
+    loginButton.addEventListener('click', () => openModal(loginModal));
 
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        console.log('[Stripe] cardForm submit fired', {
-            pendingMode,
-            hasSecret: !!pendingClientSecret
-        });
         loginFormError.classList.add('hidden');
         const phoneNumber = document.getElementById('login-phone-number').value;
-
         if (!phoneNumber) {
             loginFormError.textContent = "Please enter your phone number.";
             loginFormError.classList.remove('hidden');
             return;
         }
-
         try {
             const { data, error } = await supabaseClient.functions.invoke('get-user-by-phone', { body: { phoneNumber } });
             if (error) throw error;
-
             if (data.userId) {
                 localStorage.setItem('supdinner_user_id', data.userId);
                 closeModal(loginModal);
@@ -626,7 +605,6 @@ const cardContent = document.createElement('div');
             ageRange: document.getElementById('request-age-range').value,
             theme: document.getElementById('request-theme').value,
         };
-        
         try {
             const { error } = await supabaseClient.functions.invoke('send-request-notification', { body: formData });
             if (error) throw error;
@@ -638,18 +616,13 @@ const cardContent = document.createElement('div');
     });
 
     disclaimerCheckbox.addEventListener('change', () => {
-        if (isNewUserFlow) {
-            joinSubmitButton.disabled = !disclaimerCheckbox.checked;
-        }
+        if (isNewUserFlow) joinSubmitButton.disabled = !disclaimerCheckbox.checked;
     });
-
     requestDisclaimerCheckbox.addEventListener('change', () => {
         requestSubmitButton.disabled = !requestDisclaimerCheckbox.checked;
     });
 
-
     // --- MODAL CONTROLS ---
-    
     function openModal(modal) {
         modal.classList.remove('hidden');
         setTimeout(() => {
@@ -657,7 +630,6 @@ const cardContent = document.createElement('div');
             modal.querySelector('.modal-content').classList.remove('scale-95');
         }, 10);
     }
-
     function closeModal(modal) {
         modal.classList.add('opacity-0');
         modal.querySelector('.modal-content').classList.add('scale-95');
@@ -666,21 +638,19 @@ const cardContent = document.createElement('div');
             const form = modal.querySelector('form');
             if (form) form.reset();
             if (modal === joinModal) {
-                 showModalStep(1, joinModal);
-                 formError1.classList.add('hidden');
-                 newUserFields.classList.add('hidden');
-                 joinSubmitButton.textContent = 'Continue';
-                 joinSubmitButton.disabled = false;
-                 isNewUserFlow = false;
+                showModalStep(1, joinModal);
+                formError1.classList.add('hidden');
+                newUserFields.classList.add('hidden');
+                joinSubmitButton.textContent = 'Continue';
+                joinSubmitButton.disabled = false;
+                isNewUserFlow = false;
             }
             if (modal === requestModal) {
                 showModalStep(1, requestModal);
                 requestFormError.classList.add('hidden');
                 requestSubmitButton.disabled = true;
             }
-            if (modal === loginModal) {
-                loginFormError.classList.add('hidden');
-            }
+            if (modal === loginModal) loginFormError.classList.add('hidden');
             refreshData();
         }, 300);
     }
@@ -693,7 +663,6 @@ const cardContent = document.createElement('div');
             cardModalContent.classList.remove('scale-95');
         }, 10);
     }
-
     function closeCardModalModalOnly() {
         cardModal.classList.add('opacity-0');
         cardModalContent.classList.add('scale-95');
@@ -704,13 +673,9 @@ const cardContent = document.createElement('div');
             cardErrors.textContent = '';
             pendingClientSecret = null;
             pendingMode = null;
-            
-            // action to run after a successful Stripe confirm
-            let pendingPostStripeAction = null;
-
+            // do not re-declare pendingPostStripeAction here; we clear it on success path
         }, 300);
     }
-
     function showModalStep(step, modal) {
         const steps = modal.querySelectorAll('[id^="modal-step-"], [id^="request-step-"]');
         steps.forEach(stepEl => {
@@ -718,7 +683,6 @@ const cardContent = document.createElement('div');
             stepEl.classList.toggle('hidden', stepNumber != step);
         });
     }
-    
     function showSuccessStep() {
         if (signupAction === 'waitlist') {
             successTitle.textContent = "You're on the waitlist!";
@@ -744,9 +708,7 @@ const cardContent = document.createElement('div');
     closeRequestModal2.addEventListener('click', () => closeModal(requestModal));
     requestModal.addEventListener('click', (e) => { if (e.target === requestModal) closeModal(requestModal); });
 
-
     // --- INITIALIZATION & REFRESH LOGIC ---
-
     async function refreshData() {
         const localUserId = localStorage.getItem('supdinner_user_id');
 
@@ -790,9 +752,7 @@ const cardContent = document.createElement('div');
             userStatusDiv.classList.add('hidden');
         }
         
-        if (activeDate) {
-            await renderTables(activeDate);
-        }
+        if (activeDate) await renderTables(activeDate);
     };
 
     async function initStripeIfNeeded() {
@@ -809,7 +769,6 @@ const cardContent = document.createElement('div');
         pendingMode = 'setup';
         openCardModal();
     }
-
     async function confirmPaymentIntent(clientSecret) {
         await initStripeIfNeeded();
         pendingClientSecret = clientSecret;
@@ -817,8 +776,10 @@ const cardContent = document.createElement('div');
         openCardModal();
     }
 
+    // Stripe card form submit
     cardForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        console.log('[Stripe] cardForm submit fired', { pendingMode, hasSecret: !!pendingClientSecret });
         if (!pendingClientSecret || !pendingMode) return;
 
         cardConfirmButton.disabled = true;
@@ -828,14 +789,10 @@ const cardContent = document.createElement('div');
         try {
             let result;
             if (pendingMode === 'setup') {
-                result = await stripe.confirmCardSetup(pendingClientSecret, {
-                    payment_method: { card: cardElement }
-                });
+                result = await stripe.confirmCardSetup(pendingClientSecret, { payment_method: { card: cardElement } });
                 console.log('[Stripe] confirm result', result);
             } else {
-                result = await stripe.confirmCardPayment(pendingClientSecret, {
-                    payment_method: { card: cardElement }
-                });
+                result = await stripe.confirmCardPayment(pendingClientSecret, { payment_method: { card: cardElement } });
                 console.log('[Stripe] confirm result', result);
             }
 
@@ -846,9 +803,8 @@ const cardContent = document.createElement('div');
                 return;
             }
 
-            // Success: close modal then perform the deferred join (if any)
+            // Success: close modal then perform deferred join (if any)
             closeCardModalModalOnly();
-
             try {
                 if (typeof pendingPostStripeAction === 'function') {
                     await pendingPostStripeAction();
@@ -857,10 +813,8 @@ const cardContent = document.createElement('div');
                 pendingPostStripeAction = null;
             }
 
-            // Refresh UI and show success
             await refreshData();
             showSuccessStep();
-
 
         } catch (err) {
             cardErrors.textContent = err.message || 'Unexpected error.';
@@ -876,7 +830,7 @@ const cardContent = document.createElement('div');
             if (datesError) throw datesError;
 
             if (dates && dates.length > 0) {
-                renderTabs(dates); 
+                renderTabs(dates);
                 await refreshData();
             } else {
                 loadingSpinner.classList.add('hidden');
