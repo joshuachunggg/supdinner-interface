@@ -452,12 +452,14 @@ const cardContent = document.createElement('div');
                         body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                     });
                     if (siErr) throw siErr;
+                    console.log('[Stripe] setup client_secret', siRes.client_secret);
                     await confirmSetupIntent(siRes.client_secret);
                     } else {
                     const { data: piRes, error: piErr } = await supabaseClient.functions.invoke('stripe-create-hold', {
                         body: { userId: data.userId, tableId: selectedTableId, collateral_cents: collateralCents }
                     });
                     if (piErr) throw piErr;
+                    console.log('[Stripe] payment client_secret', piRes.client_secret);
                     await confirmPaymentIntent(piRes.client_secret);
                     }
                 } else {
@@ -581,6 +583,10 @@ const cardContent = document.createElement('div');
 
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        console.log('[Stripe] cardForm submit fired', {
+            pendingMode,
+            hasSecret: !!pendingClientSecret
+        });
         loginFormError.classList.add('hidden');
         const phoneNumber = document.getElementById('login-phone-number').value;
 
@@ -824,10 +830,12 @@ const cardContent = document.createElement('div');
                 result = await stripe.confirmCardSetup(pendingClientSecret, {
                     payment_method: { card: cardElement }
                 });
+                console.log('[Stripe] confirm result', result);
             } else {
                 result = await stripe.confirmCardPayment(pendingClientSecret, {
                     payment_method: { card: cardElement }
                 });
+                console.log('[Stripe] confirm result', result);
             }
 
             if (result.error) {
