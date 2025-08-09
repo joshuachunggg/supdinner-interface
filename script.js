@@ -135,9 +135,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const isUserJoined = currentUserState.isLoggedIn && currentUserState.joinedTableId === table.id;
             const isUserWaitlisted = currentUserState.isLoggedIn && currentUserState.waitlistedTableIds.includes(table.id);
 
+            const now = new Date();
+            const tableStart = table.dinner_date ? new Date(table.dinner_date) : null;
+            const isPast = tableStart ? tableStart < now : false;
+
             let button;
             if (table.is_cancelled) {
                 button = createButton('Cancelled', ['btn-disabled'], true);
+            } else if (isPast) {
+                // Past dinners are informational only
+                button = createButton('Past', ['btn-disabled'], true);
             } else if (isUserJoined) {
                 if (table.is_locked) {
                     button = createButton('Locked In', ['btn-disabled'], true);
@@ -743,7 +750,6 @@ document.addEventListener('DOMContentLoaded', () => {
         .single();
 
         if (pErr || !profile) {
-        // session is stale; clear it
         localStorage.removeItem('supdinner_user_id');
         currentUserState = {
             isLoggedIn: false, userId: null, joinedTableId: null,
@@ -754,16 +760,30 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
         }
 
-        // 2) only consider FUTURE signup (fixes the “cooldown” issue)
-        const nowIso = new Date().toISOString();
-        const { data: upcoming } = await supabaseClient
+        // 2) get all signups for this user (no join)
+        const { data: mySignups } = await supabaseClient
         .from('signups')
-        .select('table_id, tables!inner(dinner_date)')
-        .eq('user_id', localUserId)
-        .gte('tables.dinner_date', nowIso)
-        .order('tables.dinner_date', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .select('table_id')
+        .eq('user_id', localUserId);
+
+        let joinedTableId = null;
+        if (mySignups && mySignups.length) {
+        const nowIso = new Date().toISOString();
+        const tableIds = [...new Set(mySignups.map(s => s.table_id))];
+
+        // fetch those tables and find the next one in the future
+        const { data: myTables } = await supabaseClient
+            .from('tables')
+            .select('id, dinner_date')
+            .in('id', tableIds)
+            .gte('dinner_date', nowIso)
+            .order('dinner_date', { ascending: true })
+            .limit(1);
+
+        if (myTables && myTables.length) {
+            joinedTableId = myTables[0].id;
+        }
+        }
 
         // 3) waitlists
         const { data: waitlists } = await supabaseClient
@@ -771,11 +791,11 @@ document.addEventListener('DOMContentLoaded', () => {
         .select('table_id')
         .eq('user_id', localUserId);
 
-        // 4) set state + UI
+        // 4) state + UI
         currentUserState = {
         isLoggedIn: true,
         userId: localUserId,
-        joinedTableId: upcoming ? upcoming.table_id : null,
+        joinedTableId,
         waitlistedTableIds: waitlists ? waitlists.map(w => w.table_id) : [],
         isSuspended: profile.is_suspended,
         suspensionEndDate: profile.suspension_end_date,
@@ -788,7 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('request-name').value = profile.first_name || '';
         document.getElementById('request-phone').value = profile.phone_number || '';
 
-        // 5) make sure Stripe customer exists
+        // 5) ensure Stripe customer
         try {
         await supabaseClient.functions.invoke('stripe-create-customer', {
             body: { userId: currentUserState.userId }
@@ -808,7 +828,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (activeDate) await renderTables(activeDate);
     }
-
 
     async function initStripeIfNeeded() {
         if (!stripe) {
