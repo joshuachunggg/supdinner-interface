@@ -734,9 +734,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (localUserId) {
             loginButton.classList.add('hidden');
-            const { data: profile } = await supabaseClient.from('users').select('first_name, is_suspended, suspension_end_date, phone_number').eq('id', localUserId).single();
-            const { data: signup } = await supabaseClient.from('signups').select('table_id').eq('user_id', localUserId).maybeSingle();
-            const { data: waitlists } = await supabaseClient.from('waitlists').select('table_id').eq('user_id', localUserId);
+            // Only consider future signups
+            const nowIso = new Date().toISOString();
+            const { data: upcoming } = await supabaseClient
+            .from('signups')
+            .select('table_id, tables!inner(dinner_date)')
+            .eq('user_id', localUserId)
+            .gte('tables.dinner_date', nowIso)
+            .order('tables.dinner_date', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+            const { data: waitlists } = await supabaseClient
+            .from('waitlists')
+            .select('table_id')
+            .eq('user_id', localUserId);
+
+            currentUserState = {
+            isLoggedIn: true,
+            userId: localUserId,
+            joinedTableId: upcoming ? upcoming.table_id : null,
+            waitlistedTableIds: waitlists ? waitlists.map(w => w.table_id) : [],
+            isSuspended: profile.is_suspended,
+            suspensionEndDate: profile.suspension_end_date,
+            name: profile.first_name,
+            phone: profile.phone_number
+            };
 
             if (profile) {
                 currentUserState = {
