@@ -431,6 +431,7 @@ const cardContent = document.createElement('div');
                 const dinnerDate = activeDate ? new Date(`${activeDate}T00:00:00`) : null;
 
                 // Pull collateral amount (fallback $10)
+                console.log('[Join flow] selectedTableId before collateral fetch:', selectedTableId);
                 const { data: t } = await supabaseClient.from('tables')
                     .select('id, collateral_cents')
                     .eq('id', selectedTableId)
