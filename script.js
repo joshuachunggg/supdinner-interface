@@ -209,13 +209,13 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
     }
   }
 
-  // 3) create new if none
+  // 3) create new if none — ensure NOT NULL first_name
   if (!u) {
     const insert = {
       auth_user_id: authId,
       email,
       phone_number: phoneOptional || null,
-      first_name: firstNameOptional || null,
+      first_name: (firstNameOptional && firstNameOptional.trim()) || 'Friend' // <- safe default
     };
     const { data: created, error: insErr } = await supabaseClient
       .from('users')
@@ -226,7 +226,7 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
     return created.id;
   }
 
-  // 4) backfill phone/name on existing
+  // 4) backfill missing fields
   const patch = {};
   if (!u.phone_number && phoneOptional) patch.phone_number = phoneOptional;
   if (!u.first_name && firstNameOptional) patch.first_name = firstNameOptional;
@@ -802,7 +802,16 @@ const handleJoinWaitlistClick = async (e) => {
     const pass  = document.getElementById('su-pass').value;
 
     try {
-      const { error } = await supabaseClient.auth.signUp({ email, password: pass });
+    // in your signup handler
+    const { error } = await supabaseClient.auth.signUp({
+    email,
+    password: pass,
+    options: {
+        emailRedirectTo: 'https://supdinner.com',   // or your Webflow page
+        data: { first_name: first, phone_number: phone }       // store in user_metadata
+    }
+    });
+
       if (error) throw error;
 
       const userId = await ensureUserRowFromSession(phone, first);
