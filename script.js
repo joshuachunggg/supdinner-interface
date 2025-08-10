@@ -9,6 +9,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let elements = null;
   let cardElement = null;
 
+  // --- REDIRECT URL ---
+  const EMAIL_REDIRECT_TO = `${location.origin}/sign-up`; // or "/" if your app lives at root
+
+
   // state for Stripe modal confirmation
   let pendingClientSecret = null;
   let pendingMode = null; // 'setup' or 'payment'
@@ -19,6 +23,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const SUPABASE_ANON_KEY =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc";
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // When a session starts (e.g., after email confirm), finish linking profile and refresh UI
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+          try {
+              await linkOrCreateProfile({}); // safe no-op if already linked
+          } catch (e) {
+              console.warn('[post-confirm] link/create skipped:', e?.message || e);
+          } finally {
+              // close modal if open
+              const accountModal = document.getElementById('account-modal');
+              if (accountModal && !accountModal.classList.contains('hidden')) {
+                  accountModal.classList.add('hidden');
+              }
+              await refreshData();
+          }
+      }
+  });
 
   // Auto-finish profile link when a session appears (e.g., after email confirm)
   supabaseClient.auth.onAuthStateChange(async (event, session) => {
@@ -283,22 +305,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // === Top-level: link or create profile via Edge Function ===
   async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
-    try {
-      const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
-        body: { first_name, phone_number, age_range }
-      });
-      if (error) throw error;
-      if (data?.user_id) localStorage.setItem('supdinner_user_id', String(data.user_id));
-      return true;
-    } catch (err) {
-      // 401 right after signup (email confirmation ON) is expected
-      if (err?.status === 401) {
-        console.warn('[link-or-create-profile] 401 (no session yet). User must confirm email, then log in.');
-        return false;
+      try {
+          const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
+              body: { first_name, phone_number, age_range }
+          });
+          if (error) throw error;
+          if (data?.user_id) localStorage.setItem('supdinner_user_id', String(data.user_id));
+          return true;
+      } catch (err) {
+          // 401 is normal if no session yet (e.g., before email confirm)
+          if (err?.status === 401) {
+              console.warn('[link-or-create-profile] 401 (no session yet).');
+              return false;
+          }
+          console.error('[link-or-create-profile] failed', err);
+          // Don’t rethrow—return false so UI can continue (prevents spinner hang)
+          return false;
       }
-      console.error('[link-or-create-profile] failed', err);
-      throw err;
-    }
   }
 
   // --- RENDER TABS ---
@@ -385,219 +408,169 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- TABLES LIST ---
   const renderTables = async (dateString) => {
-    tablesContainer.innerHTML = "";
-    loadingSpinner.classList.remove("hidden");
-    noTablesMessage.classList.add("hidden");
+      tablesContainer.innerHTML = "";
+      loadingSpinner.classList.remove("hidden");
+      noTablesMessage.classList.add("hidden");
 
-    const { data: filteredTables, error } = await supabaseClient.rpc(
-      "get_tables_for_day",
-      { day_string: dateString }
-    );
-    if (error) {
-      console.error("Error fetching tables:", error);
-      loadingSpinner.classList.add("hidden");
-      tablesContainer.innerHTML = `
-        <div class="text-center p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-          <p class="font-bold">Could not load tables.</p>
-          <p class="text-sm mt-1"><strong>Error:</strong> ${error.message}</p>
-        </div>`;
-      return;
-    }
+      try {
+          const { data: filteredTables, error } = await supabaseClient.rpc(
+              "get_tables_for_day",
+              { day_string: dateString }
+          );
+          if (error) throw error;
 
-    loadingSpinner.classList.add("hidden");
-
-    if (!filteredTables || filteredTables.length === 0) {
-      noTablesMessage.classList.remove("hidden");
-      return;
-    }
-
-    filteredTables.forEach((table) => {
-      const card = document.createElement("div");
-      card.className = `bg-white rounded-xl shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 ${
-        currentUserState.joinedTableId === table.id
-          ? "ring-2 ring-brand-accent"
-          : ""
-      } ${table.is_cancelled ? "opacity-60" : ""}`;
-
-      const spotsLeft = table.total_spots - table.spots_filled;
-      const isFull = spotsLeft <= 0;
-      const isUserJoined =
-        currentUserState.isLoggedIn &&
-        currentUserState.joinedTableId === table.id;
-      const isUserWaitlisted =
-        currentUserState.isLoggedIn &&
-        currentUserState.waitlistedTableIds.includes(table.id);
-
-      // Past gating for actions
-      const now = new Date();
-      const tableStart = table.dinner_date ? new Date(table.dinner_date) : null;
-      const isPast = tableStart ? tableStart < now : false;
-      const requiresLogin = !currentUserState.isLoggedIn;
-
-      let button;
-      if (table.is_cancelled) {
-        button = createButton("Cancelled", ["btn-disabled"], true);
-      } else if (isPast) {
-        button = createButton("Past", ["btn-disabled"], true);
-      } else if (requiresLogin) {
-        // not logged in → always funnel to Account modal
-        button = createButton("Log in to Join", [
-          "login-to-join",
-          "btn-primary",
-        ]);
-        button.dataset.tableId = table.id;
-      } else if (isUserJoined) {
-        if (table.is_locked) {
-          button = createButton("Locked In", ["btn-disabled"], true);
-        } else {
-          button = createButton("Leave Table", [
-            "leave-button",
-            "btn-secondary",
-          ]);
-          button.dataset.tableId = table.id;
-        }
-      } else {
-        if (isFull) {
-          if (isUserWaitlisted) {
-            button = createButton("Leave Waitlist", [
-              "leave-waitlist-button",
-              "btn-secondary",
-            ]);
-            button.dataset.tableId = table.id;
-          } else {
-            button = createButton("Join Waitlist", [
-              "join-waitlist-button",
-              "btn-primary",
-            ]);
-            button.dataset.tableId = table.id;
+          if (!filteredTables || filteredTables.length === 0) {
+              noTablesMessage.classList.remove("hidden");
+              return;
           }
-        } else {
-          if (currentUserState.joinedTableId) {
-            button = createButton("In Another Table", ["btn-disabled"], true);
-          } else {
-            button = createButton("Join Table", ["join-button", "btn-primary"]);
-            button.dataset.tableId = table.id;
-          }
-        }
+
+          filteredTables.forEach((table) => {
+              const card = document.createElement("div");
+              card.className =
+                  `bg-white rounded-xl shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 ` +
+                  `${currentUserState.joinedTableId === table.id ? "ring-2 ring-brand-accent" : ""} ` +
+                  `${table.is_cancelled ? "opacity-60" : ""}`;
+
+              const spotsLeft = table.total_spots - table.spots_filled;
+              const isFull = spotsLeft <= 0;
+              const isUserJoined = currentUserState.isLoggedIn && currentUserState.joinedTableId === table.id;
+              const isUserWaitlisted = currentUserState.isLoggedIn && currentUserState.waitlistedTableIds.includes(table.id);
+
+              // Past gating: if dinner already started, no actions
+              const now = new Date();
+              const tableStart = table.dinner_date ? new Date(table.dinner_date) : null;
+              const isPast = tableStart ? tableStart < now : false;
+
+              const requiresLogin = !currentUserState.isLoggedIn;
+
+              let button;
+              if (table.is_cancelled) {
+                  button = createButton("Cancelled", ["btn-disabled"], true);
+              } else if (isPast) {
+                  button = createButton("Past", ["btn-disabled"], true);
+              } else if (requiresLogin) {
+                  // Not logged in → always funnel to Account modal
+                  button = createButton("Log in to Join", ["login-to-join", "btn-primary"]);
+                  button.dataset.tableId = table.id;
+              } else if (isUserJoined) {
+                  // User is in this table
+                  if (table.is_locked) {
+                      button = createButton("Locked In", ["btn-disabled"], true);
+                  } else {
+                      button = createButton("Leave Table", ["leave-button", "btn-secondary"]);
+                      button.dataset.tableId = table.id;
+                  }
+              } else {
+                  // User not in this table
+                  if (isFull) {
+                      if (isUserWaitlisted) {
+                          button = createButton("Leave Waitlist", ["leave-waitlist-button", "btn-secondary"]);
+                          button.dataset.tableId = table.id;
+                      } else {
+                          button = createButton("Join Waitlist", ["join-waitlist-button", "btn-primary"]);
+                          button.dataset.tableId = table.id;
+                      }
+                  } else {
+                      // Table has open spots
+                      if (currentUserState.joinedTableId) {
+                          // already in another future table → block joining
+                          button = createButton("In Another Table", ["btn-disabled"], true);
+                      } else {
+                          button = createButton("Join Table", ["join-button", "btn-primary"]);
+                          button.dataset.tableId = table.id;
+                      }
+                  }
+              }
+
+              let bannerHTML = "";
+              if (table.is_cancelled) {
+                  bannerHTML = '<div class="cancelled-banner text-center p-2 text-sm font-semibold font-sans">This dinner has been cancelled.</div>';
+              } else if (table.is_locked && isUserJoined) {
+                  bannerHTML = '<div class="locked-in-banner text-center p-2 text-sm font-semibold font-sans">You are locked in for this dinner!</div>';
+              }
+
+              let themeHTML = "";
+              if (table.theme) {
+                  themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
+              }
+
+              // Dots (robust)
+              const totalRaw  = Number(table.total_spots);
+              const filledRaw = Number(table.spots_filled);
+              const minRaw    = Number(table.min_spots);
+              const filled = Number.isFinite(filledRaw) ? Math.max(0, filledRaw) : 0;
+              let total = Number.isFinite(totalRaw) ? totalRaw
+                          : Number.isFinite(minRaw) ? minRaw
+                          : (filled > 0 ? filled : 0);
+              let min = Number.isFinite(minRaw) ? minRaw : Math.max(0, Math.min(total, filled));
+              total = Math.max(total, min, filled);
+              min   = Math.min(min, total);
+
+              const dots = [];
+              for (let i = 0; i < total; i++) {
+                  if (i < filled) {
+                      dots.push('<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>');
+                  } else if (i < min) {
+                      dots.push('<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>');
+                  } else {
+                      dots.push('<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>');
+                  }
+              }
+              const spotsIndicatorHTML = dots.join("");
+              const totalDisplay  = Number.isFinite(totalRaw)  ? totalRaw  : total;
+              const filledDisplay = Number.isFinite(filledRaw) ? filledRaw : filled;
+
+              const cardContent = document.createElement("div");
+              cardContent.innerHTML = `
+                  ${bannerHTML}
+                  <div class="p-6">
+                      <div class="flex flex-col sm:flex-row justify-between sm:items-center">
+                          <div>
+                              <div class="flex items-center space-x-3">
+                                  <div class="text-lg font-bold text-brand-accent font-heading">${table.time}</div>
+                                  <div class="text-gray-400">&bull;</div>
+                                  <div class="text-lg font-semibold text-brand-text font-heading">${table.neighborhood}</div>
+                              </div>
+                              <div class="flex items-center space-x-2 mt-1">
+                                  <p class="text-sm text-gray-500 font-sans">Age Range: ${table.age_range}</p>
+                                  ${themeHTML ? `<div class="text-gray-400">&bull;</div> ${themeHTML}` : ""}
+                              </div>
+                          </div>
+                          <div class="mt-4 sm:mt-0 flex-shrink-0" id="button-container-${table.id}"></div>
+                      </div>
+                      <div class="mt-4 pt-4 border-t border-gray-200">
+                          <div class="flex items-center justify-between text-sm">
+                              <p class="text-gray-600 font-heading">Spots Filled:</p>
+                              <div class="flex items-center flex-wrap gap-1">
+                                  ${spotsIndicatorHTML}
+                                  <span class="font-medium text-brand-text">${filledDisplay}/${totalDisplay}</span>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              `;
+              card.appendChild(cardContent);
+              card.querySelector(`#button-container-${table.id}`).appendChild(button);
+              tablesContainer.appendChild(card);
+          });
+
+          // Bind actions
+          document.querySelectorAll(".join-button").forEach((btn) => btn.addEventListener("click", handleJoinClick));
+          document.querySelectorAll(".leave-button").forEach((btn) => btn.addEventListener("click", handleLeaveClick));
+          document.querySelectorAll(".join-waitlist-button").forEach((btn) => btn.addEventListener("click", handleJoinWaitlistClick));
+          document.querySelectorAll(".leave-waitlist-button").forEach((btn) => btn.addEventListener("click", handleLeaveWaitlistClick));
+          document.querySelectorAll(".login-to-join").forEach((btn) => btn.addEventListener("click", () => openAccount()));
+      } catch (err) {
+          console.error("Error fetching tables:", err);
+          tablesContainer.innerHTML = `
+              <div class="text-center p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                  <p class="font-bold">Could not load tables.</p>
+                  <p class="text-sm mt-1"><strong>Error:</strong> ${err.message || err}</p>
+              </div>`;
+      } finally {
+          // ALWAYS clear spinner
+          loadingSpinner.classList.add("hidden");
       }
-
-      let bannerHTML = "";
-      if (table.is_cancelled) {
-        bannerHTML =
-          '<div class="cancelled-banner text-center p-2 text-sm font-semibold font-sans">This dinner has been cancelled.</div>';
-      } else if (table.is_locked && isUserJoined) {
-        bannerHTML =
-          '<div class="locked-in-banner text-center p-2 text-sm font-semibold font-sans">You are locked in for this dinner!</div>';
-      }
-
-      let themeHTML = "";
-      if (table.theme) {
-        themeHTML = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">${table.theme}</span>`;
-      }
-
-      // Dots (robust)
-      const totalRaw = Number(table.total_spots);
-      const filledRaw = Number(table.spots_filled);
-      const minRaw = Number(table.min_spots);
-      const filled = Number.isFinite(filledRaw) ? Math.max(0, filledRaw) : 0;
-      let total = Number.isFinite(totalRaw)
-        ? totalRaw
-        : Number.isFinite(minRaw)
-        ? minRaw
-        : filled > 0
-        ? filled
-        : 0;
-      let min = Number.isFinite(minRaw)
-        ? minRaw
-        : Math.max(0, Math.min(total, filled));
-      total = Math.max(total, min, filled);
-      min = Math.min(min, total);
-
-      let dots = [];
-      for (let i = 0; i < total; i++) {
-        if (i < filled) {
-          dots.push(
-            `<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-accent"></span>`
-          );
-        } else if (i < min) {
-          dots.push(
-            `<span class="inline-block h-2.5 w-2.5 rounded-full bg-brand-gray-dark"></span>`
-          );
-        } else {
-          dots.push(
-            `<span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>`
-          );
-        }
-      }
-      const spotsIndicatorHTML = dots.join("");
-      const totalDisplay = Number.isFinite(totalRaw) ? totalRaw : total;
-      const filledDisplay = Number.isFinite(filledRaw) ? filledRaw : filled;
-
-      const cardContent = document.createElement("div");
-      cardContent.innerHTML = `
-        ${bannerHTML}
-        <div class="p-6">
-          <div class="flex flex-col sm:flex-row justify-between sm:items-center">
-            <div>
-              <div class="flex items-center space-x-3">
-                <div class="text-lg font-bold text-brand-accent font-heading">${
-                  table.time
-                }</div>
-                <div class="text-gray-400">&bull;</div>
-                <div class="text-lg font-semibold text-brand-text font-heading">${
-                  table.neighborhood
-                }</div>
-              </div>
-              <div class="flex items-center space-x-2 mt-1">
-                <p class="text-sm text-gray-500 font-sans">Age Range: ${
-                  table.age_range
-                }</p>
-                ${
-                  themeHTML
-                    ? `<div class="text-gray-400">&bull;</div> ${themeHTML}`
-                    : ""
-                }
-              </div>
-            </div>
-            <div class="mt-4 sm:mt-0 flex-shrink-0" id="button-container-${
-              table.id
-            }"></div>
-          </div>
-          <div class="mt-4 pt-4 border-t border-gray-200">
-            <div class="flex items-center justify-between text-sm">
-              <p class="text-gray-600 font-heading">Spots Filled:</p>
-              <div class="flex items-center flex-wrap gap-1">
-                ${spotsIndicatorHTML}
-                <span class="font-medium text-brand-text">${filledDisplay}/${totalDisplay}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      card.appendChild(cardContent);
-      card.querySelector(`#button-container-${table.id}`).appendChild(button);
-      tablesContainer.appendChild(card);
-    });
-
-    document
-      .querySelectorAll(".join-button")
-      .forEach((button) => button.addEventListener("click", handleJoinClick));
-    document
-      .querySelectorAll(".leave-button")
-      .forEach((button) => button.addEventListener("click", handleLeaveClick));
-    document
-      .querySelectorAll(".join-waitlist-button")
-      .forEach((button) =>
-        button.addEventListener("click", handleJoinWaitlistClick)
-      );
-    document
-      .querySelectorAll(".leave-waitlist-button")
-      .forEach((button) =>
-        button.addEventListener("click", handleLeaveWaitlistClick)
-      );
-    document.querySelectorAll(".login-to-join").forEach((btn) => {
-      btn.addEventListener("click", () => openAccount());
-    });
   };
 
   // --- EVENT HANDLERS ---
@@ -1037,8 +1010,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (error) throw error;
 
       // We may not have phone/first/age here—pass empty; function won’t overwrite non-nulls.
-      await linkOrCreateProfile({});
-
+      try {
+        await linkOrCreateProfile({});
+      } catch (e) {
+        console.warn('[login] link/create skipped:', e?.message || e);
+      }
       closeAccount();
       await refreshData();
     } catch (e2) {
@@ -1047,56 +1023,51 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   formSignup.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    signupErrorBox.textContent = "";
+      e.preventDefault();
+      signupErrorBox.textContent = "";
 
-    const first = document.getElementById("su-first").value.trim();
-    const phone = document.getElementById("su-phone").value.trim();
-    const email = document.getElementById("su-email").value.trim();
-    const pass = document.getElementById("su-pass").value;
-    const age = document.getElementById("su-age").value;
+      const first = document.getElementById("su-first").value.trim();
+      const phone = document.getElementById("su-phone").value.trim();
+      const email = document.getElementById("su-email").value.trim();
+      const pass  = document.getElementById("su-pass").value;
+      const age   = document.getElementById("su-age").value;
 
-    if (!first || !phone || !age) {
-      signupErrorBox.textContent = "Please fill first, phone, and age range.";
-      return;
-    }
-
-    try {
-      const redirectTo = `https://sup-380d9c.webflow.io/sign-up`; // or a specific path if not at site root
-      const { error } = await supabaseClient.auth.signUp({
-        email,
-        password: pass,
-        options: {
-          emailRedirectTo: redirectTo,
-          data: { first_name: first, phone_number: phone, age_range: age },
-        },
-      });
-      if (error) throw error;
-
-      // Do we already have a session? (happens if confirmations are disabled)
-      const {
-        data: { session },
-      } = await supabaseClient.auth.getSession();
-
-      if (session?.user) {
-        // We’re logged in right away – proceed to link/create.
-        await linkOrCreateProfile({
-          first_name: first,
-          phone_number: phone,
-          age_range: age,
-        });
-        closeAccount();
-        await refreshData();
-      } else {
-        // No session yet – user must confirm email first.
-        signupErrorBox.textContent = "Check your email to confirm your account, then return here and log in.";
-        // auto-switch to Login tab so they don’t click signup again
-        document.getElementById('tab-login').click();
+      if (!first || !phone || !age) {
+          signupErrorBox.textContent = "Please fill first, phone, and age range.";
+          return;
       }
-    } catch (err) {
-      signupErrorBox.textContent = err.message || "Signup failed";
-    }
+
+      try {
+          const { error } = await supabaseClient.auth.signUp({
+              email,
+              password: pass,
+              options: {
+                  // make sure EMAIL_REDIRECT_TO is set once near top: const EMAIL_REDIRECT_TO = `${location.origin}/sign-up`;
+                  emailRedirectTo: EMAIL_REDIRECT_TO,
+                  data: { first_name: first, phone_number: phone, age_range: age }
+              }
+          });
+          if (error) throw error;
+
+          // Do we already have a session? (happens if confirmations are disabled)
+          const { data: { session } } = await supabaseClient.auth.getSession();
+
+          if (session?.user) {
+              // Logged in right away → safe to create/link profile now
+              await linkOrCreateProfile({ first_name: first, phone_number: phone, age_range: age });
+              closeAccount();
+              await refreshData();
+          } else {
+              // No session yet → user must confirm email first
+              signupErrorBox.textContent = "Check your email to confirm your account, then return here and log in.";
+              const tabLogin = document.getElementById("tab-login");
+              if (tabLogin) tabLogin.click(); // steer away from re-submitting signup
+          }
+      } catch (err) {
+          signupErrorBox.textContent = err.message || "Signup failed";
+      }
   });
+
 
   // --- STRIPE MODAL CONTROLS ---
   function openCardModal() {
@@ -1316,27 +1287,30 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const initialize = async () => {
-    try {
-      await initStripeIfNeeded();
-      const { data: dates, error: datesError } = await supabaseClient.rpc(
-        "get_distinct_upcoming_dates"
-      );
-      if (datesError) throw datesError;
+      loadingSpinner.classList.remove('hidden');
+      try {
+          await initStripeIfNeeded();
 
-      if (dates && dates.length > 0) {
-        renderTabs(dates);
-        await refreshData();
-      } else {
-        loadingSpinner.classList.add("hidden");
-        noTablesMessage.textContent =
-          "No upcoming dinners are scheduled. Check back soon!";
-        noTablesMessage.classList.remove("hidden");
+          // get dates
+          const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
+          if (datesError) throw datesError;
+
+          if (dates && dates.length > 0) {
+              renderTabs(dates);
+              await refreshData();
+          } else {
+              noTablesMessage.textContent = 'No upcoming dinners are scheduled. Check back soon!';
+              noTablesMessage.classList.remove('hidden');
+          }
+      } catch (err) {
+          console.error('Initialization failed:', err);
+          tablesContainer.innerHTML = `
+              <p class="text-center text-red-500">
+                  Could not initialize. Please refresh. Error: ${err.message || err}
+              </p>`;
+      } finally {
+          loadingSpinner.classList.add('hidden');
       }
-    } catch (error) {
-      console.error("Initialization failed:", error);
-      loadingSpinner.classList.add("hidden");
-      tablesContainer.innerHTML = `<p class="text-center text-red-500">Could not initialize the application. Please try refreshing the page.</p>`;
-    }
   };
 
   initialize();
