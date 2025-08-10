@@ -1062,7 +1062,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const redirectTo = `https://www.supdinner.com/sign-up/`; // or a specific path if not at site root
+      const redirectTo = `https://sup-380d9c.webflow.io/sign-up`; // or a specific path if not at site root
       const { error } = await supabaseClient.auth.signUp({
         email,
         password: pass,
