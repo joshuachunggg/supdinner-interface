@@ -20,6 +20,24 @@ document.addEventListener("DOMContentLoaded", () => {
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc";
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+  // Auto-finish profile link when a session appears (e.g., after email confirm)
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+          try {
+              // Try to link/create without overwriting fields
+              await linkOrCreateProfile({});
+              // Close Account modal if open, refresh the UI
+              const accountModal = document.getElementById('account-modal');
+              if (accountModal && !accountModal.classList.contains('hidden')) {
+                  accountModal.classList.add('hidden');
+              }
+              await refreshData();
+          } catch (e) {
+              console.error('[post-confirm link] failed', e);
+          }
+      }
+  });
+
   // --- GLOBAL STATE ---
   let currentUserState = {
     isLoggedIn: false,
@@ -1044,12 +1062,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
+      const redirectTo = `${location.origin}/`; // or a specific path if not at site root
       const { error } = await supabaseClient.auth.signUp({
         email,
         password: pass,
         options: {
-          // Make sure this matches a Redirect URL allowed in Supabase Auth settings
-          emailRedirectTo: "https://joshuachunggg.github.io/",
+          emailRedirectTo: redirectTo,
           data: { first_name: first, phone_number: phone, age_range: age },
         },
       });
@@ -1071,8 +1089,9 @@ document.addEventListener("DOMContentLoaded", () => {
         await refreshData();
       } else {
         // No session yet – user must confirm email first.
-        signupErrorBox.textContent =
-          "Check your email to confirm your account. After you confirm and return, log in and we’ll finish linking your profile.";
+        signupErrorBox.textContent = "Check your email to confirm your account, then return here and log in.";
+        // auto-switch to Login tab so they don’t click signup again
+        document.getElementById('tab-login').click();
       }
     } catch (err) {
       signupErrorBox.textContent = err.message || "Signup failed";
