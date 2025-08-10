@@ -177,25 +177,25 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===== Auth helpers (email/password) =====
-async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
+async function ensureUserRowFromSession(phoneOptional, firstNameOptional, ageRangeOptional) {
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session || !session.user) return null;
 
   const authId = session.user.id;
   const email  = session.user.email ?? null;
 
-  // 1) already linked?
+  // already linked?
   let { data: u } = await supabaseClient
     .from('users')
-    .select('id, phone_number, first_name, auth_user_id, email')
+    .select('id, phone_number, first_name, age_range, auth_user_id, email')
     .eq('auth_user_id', authId)
     .maybeSingle();
 
-  // 2) legacy row by phone? Link it.
+  // legacy row by phone? link it
   if (!u && phoneOptional) {
     const { data: legacy } = await supabaseClient
       .from('users')
-      .select('id, phone_number, first_name, auth_user_id, email')
+      .select('id, phone_number, first_name, age_range, auth_user_id, email')
       .eq('phone_number', phoneOptional)
       .maybeSingle();
 
@@ -203,19 +203,32 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
       const patch = { auth_user_id: authId };
       if (email && !legacy.email) patch.email = email;
       if (firstNameOptional && !legacy.first_name) patch.first_name = firstNameOptional;
+      if (ageRangeOptional && !legacy.age_range) patch.age_range = ageRangeOptional;
       const { error: upErr } = await supabaseClient.from('users').update(patch).eq('id', legacy.id);
       if (upErr) throw upErr;
       return legacy.id;
     }
   }
 
-  // 3) create new if none — ensure NOT NULL first_name
+  async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
+    // require authenticated session (JWT is sent automatically by supabase-js)
+    const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
+      body: { first_name, phone_number, age_range }
+    });
+    if (error) throw error;
+    if (data?.user_id) {
+      localStorage.setItem('supdinner_user_id', String(data.user_id));
+    }
+  }
+
+  // create new if none — ensure NOT NULL columns have values
   if (!u) {
     const insert = {
       auth_user_id: authId,
       email,
       phone_number: phoneOptional || null,
-      first_name: (firstNameOptional && firstNameOptional.trim()) || 'Friend' // <- safe default
+      first_name: (firstNameOptional && firstNameOptional.trim()) || 'Friend',
+      age_range: (ageRangeOptional && ageRangeOptional.trim()) || '23-27'
     };
     const { data: created, error: insErr } = await supabaseClient
       .from('users')
@@ -226,17 +239,17 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
     return created.id;
   }
 
-  // 4) backfill missing fields
+  // backfill missing fields if we can
   const patch = {};
   if (!u.phone_number && phoneOptional) patch.phone_number = phoneOptional;
   if (!u.first_name && firstNameOptional) patch.first_name = firstNameOptional;
+  if (!u.age_range && ageRangeOptional) patch.age_range = ageRangeOptional;
   if (!u.email && email) patch.email = email;
   if (Object.keys(patch).length) {
     await supabaseClient.from('users').update(patch).eq('id', u.id);
   }
   return u.id;
 }
-
 
   // --- RENDER TABS ---
   const renderTabs = (dates) => {
@@ -542,7 +555,7 @@ const handleJoinWaitlistClick = async (e) => {
 
         // Ensure Stripe customer for this new user
         try {
-          await supabaseClient.functions.invoke('stripe-create-customer', { body: { userId: data.userId } });
+          await supabaseClient.functions.invoke('stripe-create-customer', { body: { userId: currentUserState.userId } });
         } catch (err) { console.error('Error ensuring Stripe customer (new user):', err); }
 
         // Collateral only for join
@@ -783,46 +796,56 @@ const handleJoinWaitlistClick = async (e) => {
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       if (error) throw error;
 
-      const userId = await ensureUserRowFromSession();
-      if (userId) localStorage.setItem('supdinner_user_id', String(userId));
+      // We may not have phone/first/age here—pass empty; function won’t overwrite non-nulls.
+      await linkOrCreateProfile({});
 
       closeAccount();
       await refreshData();
-    } catch (err) {
-      loginErrorBox.textContent = err.message || 'Login failed';
+    } catch (e2) {
+      loginErrorBox.textContent = e2.message || 'Login failed';
     }
   });
 
-  formSignup.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    signupErrorBox.textContent = '';
-    const first = document.getElementById('su-first').value.trim();
-    const phone = document.getElementById('su-phone').value.trim();
-    const email = document.getElementById('su-email').value.trim();
-    const pass  = document.getElementById('su-pass').value;
+formSignup.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  signupErrorBox.textContent = '';
 
-    try {
-    // in your signup handler
+  const first = document.getElementById('su-first').value.trim();
+  const phone = document.getElementById('su-phone').value.trim();
+  const email = document.getElementById('su-email').value.trim();
+  const pass  = document.getElementById('su-pass').value;
+  const age   = document.getElementById('su-age').value;
+
+  if (!first || !phone || !age) {
+    signupErrorBox.textContent = 'Please fill first, phone, and age range.';
+    return;
+  }
+
+  try {
     const { error } = await supabaseClient.auth.signUp({
-    email,
-    password: pass,
-    options: {
-        emailRedirectTo: 'https://supdinner.com',   // or your Webflow page
-        data: { first_name: first, phone_number: phone }       // store in user_metadata
-    }
+      email,
+      password: pass,
+      options: {
+        emailRedirectTo: 'https://joshuachunggg.github.io/', // your live URL
+        data: { first_name: first, phone_number: phone, age_range: age }
+      }
     });
+    if (error) throw error;
 
-      if (error) throw error;
+    // If email confirmation is ON, user may not be logged in yet.
+    // After they confirm and return, we’ll run the same link call on login.
 
-      const userId = await ensureUserRowFromSession(phone, first);
-      if (userId) localStorage.setItem('supdinner_user_id', String(userId));
+    // Try linking immediately (works if session exists right away)
+    await linkOrCreateProfile({ first_name: first, phone_number: phone, age_range: age });
 
-      closeAccount();
-      await refreshData();
-    } catch (err) {
-      signupErrorBox.textContent = err.message || 'Signup failed';
-    }
-  });
+    closeAccount();
+    await refreshData();
+  } catch (err) {
+    signupErrorBox.textContent = err.message || 'Signup failed';
+  }
+});
+
+
 
   // --- STRIPE MODAL CONTROLS ---
   function openCardModal() {
