@@ -42,24 +42,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
   });
 
-  // Auto-finish profile link when a session appears (e.g., after email confirm)
-  supabaseClient.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-          try {
-              // Try to link/create without overwriting fields
-              await linkOrCreateProfile({});
-              // Close Account modal if open, refresh the UI
-              const accountModal = document.getElementById('account-modal');
-              if (accountModal && !accountModal.classList.contains('hidden')) {
-                  accountModal.classList.add('hidden');
-              }
-              await refreshData();
-          } catch (e) {
-              console.error('[post-confirm link] failed', e);
-          }
-      }
-  });
-
   // --- GLOBAL STATE ---
   let currentUserState = {
     isLoggedIn: false,
@@ -99,12 +81,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const disclaimerCheckbox = document.getElementById("disclaimer-checkbox");
   const marketingCheckbox = document.getElementById("marketing-checkbox");
   const newUserFields = document.getElementById("new-user-fields");
-
-  // Phone-only Login Modal (legacy)
-  const loginModal = document.getElementById("login-modal");
-  const loginForm = document.getElementById("login-form");
-  const loginFormError = document.getElementById("login-form-error");
-  const closeLoginModal = document.getElementById("close-login-modal");
 
   // Request Modal
   const requestTableBtn = document.getElementById("request-table-btn");
@@ -576,22 +552,58 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- EVENT HANDLERS ---
   const handleJoinClick = async (e) => {
     if (!currentUserState.isLoggedIn) {
-      // not logged in → open Account modal and stop
       openAccount();
       return;
     }
     selectedTableId = parseInt(e.target.dataset.tableId);
     signupAction = "join";
-    const { data: table } = await supabaseClient
+
+    // Calculate days difference for setup vs hold
+    const { data: t } = await supabaseClient
       .from("tables")
-      .select("time, neighborhood")
+      .select("id, dinner_date")
       .eq("id", selectedTableId)
-      .single();
-    if (table) {
-      modalTableDetails.innerHTML = `You're joining the <strong>${table.time}</strong> dinner in <strong>${table.neighborhood}</strong>.`;
+      .maybeSingle();
+
+    let dinnerDate = t?.dinner_date ? new Date(t.dinner_date) : null;
+    if (!dinnerDate && activeDate) dinnerDate = new Date(`${activeDate}T00:00:00`);
+
+    let daysDiff = 0;
+    if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
+      const now = new Date();
+      daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
     }
-    joinModalTitle.textContent = "Join the Table";
-    openModal(joinModal);
+
+    // Create intent on the backend, confirm it on the frontend
+    try {
+      const stripeReady = await initStripeIfNeeded();
+      if (!stripeReady) {
+        console.warn('Stripe unavailable; proceeding without collateral.');
+        // (Optional) Show an inline message here.
+        showSuccessStep();
+        await refreshData();
+        return;
+      }
+
+      const collateral_cents = COLLATERAL_CENTS_DEFAULT;
+      if (daysDiff > 7) {
+        const { data: siRes, error: siErr } = await supabaseClient.functions.invoke(
+          "stripe-create-setup-intent",
+          { body: { userId: currentUserState.userId, tableId: selectedTableId, collateral_cents } }
+        );
+        if (siErr || !siRes?.client_secret) throw siErr || new Error("Missing client_secret");
+        await confirmSetupIntent(siRes.client_secret);
+      } else {
+        const { data: piRes, error: piErr } = await supabaseClient.functions.invoke(
+          "stripe-create-hold",
+          { body: { userId: currentUserState.userId, tableId: selectedTableId, collateral_cents } }
+        );
+        if (piErr || !piRes?.client_secret) throw piErr || new Error("Missing client_secret");
+        await confirmPaymentIntent(piRes.client_secret);
+      }
+    } catch (err) {
+      alert(`Could not start join: ${err?.message || err}`);
+    }
   };
 
   const handleLeaveClick = async (e) => {
@@ -614,21 +626,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     selectedTableId = parseInt(e.target.dataset.tableId);
     signupAction = "waitlist";
-
-    if (!currentUserState.isLoggedIn) {
-      const { data: table } = await supabaseClient
-        .from("tables")
-        .select("time, neighborhood")
-        .eq("id", selectedTableId)
-        .single();
-      if (table) {
-        modalTableDetails.innerHTML = `You're joining the waitlist for the <strong>${table.time}</strong> dinner in <strong>${table.neighborhood}</strong>.`;
-      }
-      joinModalTitle.textContent = "Join the Waitlist";
-      openModal(joinModal);
-      return;
-    }
-
     try {
       const { error } = await supabaseClient.functions.invoke("join-waitlist", {
         body: { tableId: selectedTableId, userId: currentUserState.userId },
@@ -639,6 +636,7 @@ document.addEventListener("DOMContentLoaded", () => {
       alert(`Error joining waitlist: ${error.message}`);
     }
   };
+
 
   const handleLeaveWaitlistClick = async (e) => {
     const tableId = parseInt(e.target.dataset.tableId);
@@ -662,241 +660,35 @@ document.addEventListener("DOMContentLoaded", () => {
     formError1.classList.add("hidden");
     joinSubmitButton.disabled = true;
 
-    if (isNewUserFlow) {
-      // NEW USER
-      const formData = {
-        firstName: document.getElementById("first-name").value,
-        phoneNumber: document.getElementById("phone-number").value,
-        ageRange: document.getElementById("age-range").value,
-        referralSource: document.getElementById("referral-source").value,
-        marketingOptIn: document.getElementById("marketing-checkbox").checked,
-        tableId: selectedTableId,
-      };
-      if (!formData.firstName || !formData.ageRange) {
-        formError1.textContent = "Please fill out all your details.";
-        formError1.classList.remove("hidden");
-        joinSubmitButton.disabled = false;
-        return;
-      }
+    // If not logged in, force account signup/login (applies to both legacy + brand new)
+    if (!currentUserState.isLoggedIn) {
+      closeModal(joinModal);
+      openAccount();
+      joinSubmitButton.disabled = false;
+      return;
+    }
 
+    // Logged in users: the only valid action here is "waitlist" (no card required).
+    // Joining a table is now handled directly by the Join button (see handleJoinClick).
+    if (signupAction === "waitlist") {
       try {
-        const functionName =
-          signupAction === "join" ? "signup-and-join" : "signup-and-waitlist";
-        const { data, error } = await supabaseClient.functions.invoke(
-          functionName,
-          { body: formData }
-        );
+        const { error } = await supabaseClient.functions.invoke("join-waitlist", {
+          body: { tableId: selectedTableId, userId: currentUserState.userId },
+        });
         if (error) throw error;
-
-        localStorage.setItem("supdinner_user_id", data.userId);
-
-        // Ensure Stripe customer for this new user
-        try {
-          await supabaseClient.functions.invoke("stripe-create-customer", {
-            body: { userId: currentUserState.userId },
-          });
-        } catch (err) {
-          console.error("Error ensuring Stripe customer (new user):", err);
-        }
-
-        // Collateral only for join
-        if (signupAction === "join") {
-          if (!selectedTableId) {
-            alert(
-              "Sorry—could not determine which table you selected. Please close and try again."
-            );
-            return;
-          }
-
-          // dinner_date for daysDiff
-          const { data: t } = await supabaseClient
-            .from("tables")
-            .select("id, dinner_date")
-            .eq("id", selectedTableId)
-            .maybeSingle();
-          let dinnerDate = null;
-          if (t?.dinner_date) dinnerDate = new Date(t.dinner_date);
-          else if (activeDate) dinnerDate = new Date(`${activeDate}T00:00:00`);
-
-          const collateralCents = COLLATERAL_CENTS_DEFAULT;
-          let daysDiff = 0;
-          if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
-            const now = new Date();
-            daysDiff =
-              (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-          }
-
-          const stripeReady =
-            !!window.Stripe &&
-            STRIPE_PUBLISHABLE_KEY &&
-            !STRIPE_PUBLISHABLE_KEY.includes("replace_me");
-          if (stripeReady) {
-            if (daysDiff > 7) {
-              const { data: siRes, error: siErr } =
-                await supabaseClient.functions.invoke(
-                  "stripe-create-setup-intent",
-                  {
-                    body: {
-                      userId: data.userId,
-                      tableId: selectedTableId,
-                      collateral_cents: collateralCents,
-                    },
-                  }
-                );
-              if (siErr || !siRes?.client_secret) {
-                alert("Payment setup failed. Please try again.");
-                return;
-              }
-              await confirmSetupIntent(siRes.client_secret);
-            } else {
-              const { data: piRes, error: piErr } =
-                await supabaseClient.functions.invoke("stripe-create-hold", {
-                  body: {
-                    userId: data.userId,
-                    tableId: selectedTableId,
-                    collateral_cents: collateralCents,
-                  },
-                });
-              if (piErr || !piRes?.client_secret) {
-                alert("Card hold failed. Please try again.");
-                return;
-              }
-              await confirmPaymentIntent(piRes.client_secret);
-            }
-          } else {
-            console.warn(
-              "Stripe not configured; skipping collateral flow for new user join."
-            );
-            showSuccessStep();
-          }
-        } else {
-          showSuccessStep();
-        }
+        showSuccessStep();
+        await refreshData();
       } catch (error) {
         formError1.textContent = `Error: ${error.message}`;
         formError1.classList.remove("hidden");
+      } finally {
         joinSubmitButton.disabled = false;
       }
     } else {
-      // EXISTING USER (legacy: phone lookup)
-      const phoneNumber = document.getElementById("phone-number").value;
-      if (!phoneNumber) {
-        formError1.textContent = "Please enter your phone number.";
-        formError1.classList.remove("hidden");
-        joinSubmitButton.disabled = false;
-        return;
-      }
-      try {
-        const { data, error } = await supabaseClient.functions.invoke(
-          "get-user-by-phone",
-          { body: { phoneNumber } }
-        );
-        if (error) throw error;
-
-        if (!data.userId) {
-          isNewUserFlow = true;
-          newUserFields.classList.remove("hidden");
-          joinSubmitButton.textContent =
-            signupAction === "join"
-              ? "Confirm & Join Table"
-              : "Confirm & Join Waitlist";
-          joinSubmitButton.disabled = !disclaimerCheckbox.checked;
-        } else {
-          localStorage.setItem("supdinner_user_id", data.userId);
-
-          if (signupAction === "join") {
-            if (!selectedTableId) {
-              alert(
-                "Sorry—could not determine which table you selected. Please close and try again."
-              );
-              return;
-            }
-
-            // defer actual join until Stripe confirms
-            pendingPostStripeAction = async () => {
-              const { error: actionError } =
-                await supabaseClient.functions.invoke("join-table", {
-                  body: { tableId: selectedTableId, userId: data.userId },
-                });
-              if (actionError) throw actionError;
-            };
-
-            const { data: t } = await supabaseClient
-              .from("tables")
-              .select("id, dinner_date")
-              .eq("id", selectedTableId)
-              .maybeSingle();
-            let dinnerDate = null;
-            if (t?.dinner_date) dinnerDate = new Date(t.dinner_date);
-            else if (activeDate)
-              dinnerDate = new Date(`${activeDate}T00:00:00`);
-
-            const collateralCents = COLLATERAL_CENTS_DEFAULT;
-            let daysDiff = 0;
-            if (dinnerDate instanceof Date && !isNaN(dinnerDate.getTime())) {
-              const now = new Date();
-              daysDiff =
-                (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-            }
-
-            const stripeReady =
-              !!window.Stripe &&
-              STRIPE_PUBLISHABLE_KEY &&
-              !STRIPE_PUBLISHABLE_KEY.includes("replace_me");
-            if (!stripeReady) {
-              console.warn("Stripe not configured; performing unguarded join.");
-              await pendingPostStripeAction();
-              pendingPostStripeAction = null;
-              showSuccessStep();
-              return;
-            }
-
-            if (daysDiff > 7) {
-              const { data: siRes, error: siErr } =
-                await supabaseClient.functions.invoke(
-                  "stripe-create-setup-intent",
-                  {
-                    body: {
-                      userId: data.userId,
-                      tableId: selectedTableId,
-                      collateral_cents: collateralCents,
-                    },
-                  }
-                );
-              if (siErr || !siRes?.client_secret) {
-                alert("Payment setup failed. Please try again.");
-                return;
-              }
-              await confirmSetupIntent(siRes.client_secret);
-            } else {
-              const { data: piRes, error: piErr } =
-                await supabaseClient.functions.invoke("stripe-create-hold", {
-                  body: {
-                    userId: data.userId,
-                    tableId: selectedTableId,
-                    collateral_cents: collateralCents,
-                  },
-                });
-              if (piErr || !piRes?.client_secret) {
-                alert("Card hold failed. Please try again.");
-                return;
-              }
-              await confirmPaymentIntent(piRes.client_secret);
-            }
-          } else {
-            const { error: actionError } =
-              await supabaseClient.functions.invoke("join-waitlist", {
-                body: { tableId: selectedTableId, userId: data.userId },
-              });
-            if (actionError) throw actionError;
-            showSuccessStep();
-          }
-        }
-      } catch (error) {
-        formError1.textContent = `Error: ${error.message}`;
-        formError1.classList.remove("hidden");
-        joinSubmitButton.disabled = false;
-      }
+      // Defensive: if someone submits this form in "join" mode, steer them back
+      formError1.textContent = "Please use the Join button above to continue.";
+      formError1.classList.remove("hidden");
+      joinSubmitButton.disabled = false;
     }
   });
 
@@ -939,40 +731,6 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       requestFormError.textContent = `Error: ${error.message}`;
       requestFormError.classList.remove("hidden");
-    }
-  });
-
-  // Phone login modal (legacy)
-  closeLoginModal.addEventListener("click", () => closeModal(loginModal));
-  loginModal.addEventListener("click", (e) => {
-    if (e.target === loginModal) closeModal(loginModal);
-  });
-  loginForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    loginFormError.classList.add("hidden");
-    const phoneNumber = document.getElementById("login-phone-number").value;
-    if (!phoneNumber) {
-      loginFormError.textContent = "Please enter your phone number.";
-      loginFormError.classList.remove("hidden");
-      return;
-    }
-    try {
-      const { data, error } = await supabaseClient.functions.invoke(
-        "get-user-by-phone",
-        { body: { phoneNumber } }
-      );
-      if (error) throw error;
-      if (data.userId) {
-        localStorage.setItem("supdinner_user_id", data.userId);
-        closeModal(loginModal);
-        refreshData();
-      } else {
-        loginFormError.textContent = "No user found with this phone number.";
-        loginFormError.classList.remove("hidden");
-      }
-    } catch (error) {
-      loginFormError.textContent = `Error: ${error.message}`;
-      loginFormError.classList.remove("hidden");
     }
   });
 
@@ -1093,11 +851,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function initStripeIfNeeded() {
     if (!stripe) {
-      stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+      if (!window.Stripe) {
+        console.warn('Stripe not available; skipping card UI.');
+        return null;
+      }
+      if (!STRIPE_PUBLISHABLE_KEY || STRIPE_PUBLISHABLE_KEY.includes('replace_me')) {
+        console.warn('Stripe key missing; skipping card UI.');
+        return null;
+      }
+      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY);
       elements = stripe.elements();
       cardElement = elements.create("card");
       cardElement.mount(cardElementMount);
     }
+    return stripe;
   }
 
   async function confirmSetupIntent(clientSecret) {
@@ -1136,23 +903,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (result.error) {
-        cardErrors.textContent =
-          result.error.message || "Card confirmation failed.";
+        cardErrors.textContent = result.error.message || "Card confirmation failed.";
         cardErrors.classList.remove("hidden");
         cardConfirmButton.disabled = false;
         return;
       }
 
-      // Success → perform deferred join
+      // Success: backend should finalize the join.
       closeCardModalModalOnly();
-      try {
-        if (typeof pendingPostStripeAction === "function") {
-          await pendingPostStripeAction();
-        }
-      } finally {
-        pendingPostStripeAction = null;
-      }
-
       await refreshData();
       showSuccessStep();
     } catch (err) {
