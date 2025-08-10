@@ -177,46 +177,66 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===== Auth helpers (email/password) =====
-  async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
-    const { data: { session } } = await supabaseClient.auth.getSession();
-    if (!session || !session.user) return null;
+async function ensureUserRowFromSession(phoneOptional, firstNameOptional) {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session || !session.user) return null;
 
-    const authId = session.user.id;
-    const email = session.user.email ?? null;
+  const authId = session.user.id;
+  const email  = session.user.email ?? null;
 
-    // By auth_user_id first
-    let { data: u } = await supabaseClient
+  // 1) already linked?
+  let { data: u } = await supabaseClient
+    .from('users')
+    .select('id, phone_number, first_name, auth_user_id, email')
+    .eq('auth_user_id', authId)
+    .maybeSingle();
+
+  // 2) legacy row by phone? Link it.
+  if (!u && phoneOptional) {
+    const { data: legacy } = await supabaseClient
       .from('users')
-      .select('id, phone_number, first_name')
-      .eq('auth_user_id', authId)
+      .select('id, phone_number, first_name, auth_user_id, email')
+      .eq('phone_number', phoneOptional)
       .maybeSingle();
 
-    if (!u) {
-      // Create a linked row
-      const insert = {
-        auth_user_id: authId,
-        email,
-        phone_number: phoneOptional || null,
-        first_name: firstNameOptional || null,
-      };
-      const { data: created, error: insErr } = await supabaseClient
-        .from('users')
-        .insert(insert)
-        .select('id')
-        .single();
-      if (insErr) throw insErr;
-      return created.id;
+    if (legacy && !legacy.auth_user_id) {
+      const patch = { auth_user_id: authId };
+      if (email && !legacy.email) patch.email = email;
+      if (firstNameOptional && !legacy.first_name) patch.first_name = firstNameOptional;
+      const { error: upErr } = await supabaseClient.from('users').update(patch).eq('id', legacy.id);
+      if (upErr) throw upErr;
+      return legacy.id;
     }
-
-    // Optional backfill phone/name
-    const patch = {};
-    if (!u.phone_number && phoneOptional) patch.phone_number = phoneOptional;
-    if (!u.first_name && firstNameOptional) patch.first_name = firstNameOptional;
-    if (Object.keys(patch).length) {
-      await supabaseClient.from('users').update(patch).eq('id', u.id);
-    }
-    return u.id;
   }
+
+  // 3) create new if none
+  if (!u) {
+    const insert = {
+      auth_user_id: authId,
+      email,
+      phone_number: phoneOptional || null,
+      first_name: firstNameOptional || null,
+    };
+    const { data: created, error: insErr } = await supabaseClient
+      .from('users')
+      .insert(insert)
+      .select('id')
+      .single();
+    if (insErr) throw insErr;
+    return created.id;
+  }
+
+  // 4) backfill phone/name on existing
+  const patch = {};
+  if (!u.phone_number && phoneOptional) patch.phone_number = phoneOptional;
+  if (!u.first_name && firstNameOptional) patch.first_name = firstNameOptional;
+  if (!u.email && email) patch.email = email;
+  if (Object.keys(patch).length) {
+    await supabaseClient.from('users').update(patch).eq('id', u.id);
+  }
+  return u.id;
+}
+
 
   // --- RENDER TABS ---
   const renderTabs = (dates) => {
@@ -289,49 +309,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     filteredTables.forEach(table => {
-      const card = document.createElement('div');
-      card.className = `bg-white rounded-xl shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 ${currentUserState.joinedTableId === table.id ? 'ring-2 ring-brand-accent' : ''} ${table.is_cancelled ? 'opacity-60' : ''}`;
+        const card = document.createElement('div');
+        card.className = `bg-white rounded-xl shadow-md overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 ${currentUserState.joinedTableId === table.id ? 'ring-2 ring-brand-accent' : ''} ${table.is_cancelled ? 'opacity-60' : ''}`;
 
-      const spotsLeft = table.total_spots - table.spots_filled;
-      const isFull = spotsLeft <= 0;
-      const isUserJoined = currentUserState.isLoggedIn && currentUserState.joinedTableId === table.id;
-      const isUserWaitlisted = currentUserState.isLoggedIn && currentUserState.waitlistedTableIds.includes(table.id);
+        const spotsLeft = table.total_spots - table.spots_filled;
+        const isFull = spotsLeft <= 0;
+        const isUserJoined = currentUserState.isLoggedIn && currentUserState.joinedTableId === table.id;
+        const isUserWaitlisted = currentUserState.isLoggedIn && currentUserState.waitlistedTableIds.includes(table.id);
 
       // Past gating for actions
-      const now = new Date();
-      const tableStart = table.dinner_date ? new Date(table.dinner_date) : null;
-      const isPast = tableStart ? tableStart < now : false;
+        const now = new Date();
+        const tableStart = table.dinner_date ? new Date(table.dinner_date) : null;
+        const isPast = tableStart ? tableStart < now : false;
+        const requiresLogin = !currentUserState.isLoggedIn;
 
-      let button;
-      if (table.is_cancelled) {
-        button = createButton('Cancelled', ['btn-disabled'], true);
-      } else if (isPast) {
-        button = createButton('Past', ['btn-disabled'], true);
-      } else if (isUserJoined) {
-        if (table.is_locked) {
-          button = createButton('Locked In', ['btn-disabled'], true);
+        let button;
+        if (table.is_cancelled) {
+            button = createButton('Cancelled', ['btn-disabled'], true);
+        } else if (isPast) {
+            button = createButton('Past', ['btn-disabled'], true);
+        } else if (requiresLogin) {
+            // not logged in → always funnel to Account modal
+            button = createButton('Log in to Join', ['login-to-join', 'btn-primary']);
+            button.dataset.tableId = table.id;
+        } else if (isUserJoined) {
+            if (table.is_locked) {
+                button = createButton('Locked In', ['btn-disabled'], true);
+            } else {
+                button = createButton('Leave Table', ['leave-button', 'btn-secondary']);
+                button.dataset.tableId = table.id;
+            }
         } else {
-          button = createButton('Leave Table', ['leave-button', 'btn-secondary']);
-          button.dataset.tableId = table.id;
+            if (isFull) {
+                if (isUserWaitlisted) {
+                button = createButton('Leave Waitlist', ['leave-waitlist-button', 'btn-secondary']);
+                button.dataset.tableId = table.id;
+                } else {
+                button = createButton('Join Waitlist', ['join-waitlist-button', 'btn-primary']);
+                button.dataset.tableId = table.id;
+                }
+            } else {
+                if (currentUserState.joinedTableId) {
+                button = createButton('In Another Table', ['btn-disabled'], true);
+                } else {
+                button = createButton('Join Table', ['join-button', 'btn-primary']);
+                button.dataset.tableId = table.id;
+                }
+            }
         }
-      } else {
-        if (isFull) {
-          if (isUserWaitlisted) {
-            button = createButton('Leave Waitlist', ['leave-waitlist-button', 'btn-secondary']);
-            button.dataset.tableId = table.id;
-          } else {
-            button = createButton('Join Waitlist', ['join-waitlist-button', 'btn-primary']);
-            button.dataset.tableId = table.id;
-          }
-        } else {
-          if (currentUserState.joinedTableId) {
-            button = createButton('In Another Table', ['btn-disabled'], true);
-          } else {
-            button = createButton('Join Table', ['join-button', 'btn-primary']);
-            button.dataset.tableId = table.id;
-          }
-        }
-      }
+
 
       let bannerHTML = '';
       if (table.is_cancelled) {
@@ -407,10 +433,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.leave-button').forEach(button => button.addEventListener('click', handleLeaveClick));
     document.querySelectorAll('.join-waitlist-button').forEach(button => button.addEventListener('click', handleJoinWaitlistClick));
     document.querySelectorAll('.leave-waitlist-button').forEach(button => button.addEventListener('click', handleLeaveWaitlistClick));
+    document.querySelectorAll('.login-to-join').forEach(btn => {
+        btn.addEventListener('click', () => openAccount());
+    });
   };
 
   // --- EVENT HANDLERS ---
-  const handleJoinClick = async (e) => {
+const handleJoinClick = async (e) => {
+    if (!currentUserState.isLoggedIn) {
+        // not logged in → open Account modal and stop
+        openAccount();
+        return;
+    }
     selectedTableId = parseInt(e.target.dataset.tableId);
     signupAction = 'join';
     const { data: table } = await supabaseClient.from('tables').select('time, neighborhood').eq('id', selectedTableId).single();
@@ -421,7 +455,7 @@ document.addEventListener('DOMContentLoaded', () => {
     openModal(joinModal);
   };
 
-  const handleLeaveClick = async (e) => {
+const handleLeaveClick = async (e) => {
     const tableId = parseInt(e.target.dataset.tableId);
     try {
       const { error } = await supabaseClient.functions.invoke('leave-table', {
@@ -434,7 +468,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  const handleJoinWaitlistClick = async (e) => {
+const handleJoinWaitlistClick = async (e) => {
+    if (!currentUserState.isLoggedIn) {
+        openAccount();
+        return;
+    }
     selectedTableId = parseInt(e.target.dataset.tableId);
     signupAction = 'waitlist';
 
