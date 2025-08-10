@@ -1,3 +1,5 @@
+// main.js
+
 document.addEventListener("DOMContentLoaded", () => {
   // --- STRIPE INIT ---
   const STRIPE_PUBLISHABLE_KEY =
@@ -72,9 +74,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const requestStep2 = document.getElementById("request-step-2");
   const requestInfoForm = document.getElementById("request-info-form");
   const requestFormError = document.getElementById("request-form-error");
-  const requestDisclaimerCheckbox = document.getElementById(
-    "request-disclaimer-checkbox"
-  );
+  const requestDisclaimerCheckbox = document.getElementById("request-disclaimer-checkbox");
   const requestSubmitButton = document.getElementById("request-submit-button");
   const closeRequestModal1 = document.getElementById("close-request-modal-1");
   const closeRequestModal2 = document.getElementById("close-request-modal-2");
@@ -122,6 +122,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (mc) mc.classList.remove("scale-95");
     }, 10);
   }
+
   function closeModal(modal) {
     modal.classList.add("opacity-0");
     const mc = modal.querySelector(".modal-content");
@@ -156,6 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
       accountModal.querySelector(".modal-content").classList.remove("scale-95");
     }, 10);
   }
+
   function closeAccount() {
     accountModal.classList.add("opacity-0");
     accountModal.querySelector(".modal-content").classList.add("scale-95");
@@ -171,6 +173,7 @@ document.addEventListener("DOMContentLoaded", () => {
       stepEl.classList.toggle("hidden", stepNumber != step);
     });
   }
+
   function showSuccessStep() {
     if (signupAction === "waitlist") {
       successTitle.textContent = "You're on the waitlist!";
@@ -261,30 +264,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // === Top-level: link or create profile via Edge Function ===
-  async function linkOrCreateProfile({
-    first_name,
-    phone_number,
-    age_range,
-  } = {}) {
+  async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
     try {
-      const { data, error } = await supabaseClient.functions.invoke(
-        "link-or-create-profile",
-        {
-          body: { first_name, phone_number, age_range },
-        }
-      );
+      const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
+        body: { first_name, phone_number, age_range }
+      });
       if (error) throw error;
-      if (data?.user_id)
-        localStorage.setItem("supdinner_user_id", String(data.user_id));
+      if (data?.user_id) localStorage.setItem('supdinner_user_id', String(data.user_id));
       return true;
     } catch (err) {
-      // When signups require email confirmation, there is no session yet => 401.
+      // 401 right after signup (email confirmation ON) is expected
       if (err?.status === 401) {
-        console.warn(
-          "[link-or-create-profile] no session yet (likely awaiting email confirmation). Will retry after login."
-        );
+        console.warn('[link-or-create-profile] 401 (no session yet). User must confirm email, then log in.');
         return false;
       }
+      console.error('[link-or-create-profile] failed', err);
       throw err;
     }
   }
@@ -1093,6 +1087,7 @@ document.addEventListener("DOMContentLoaded", () => {
       cardModalContent.classList.remove("scale-95");
     }, 10);
   }
+
   function closeCardModalModalOnly() {
     cardModal.classList.add("opacity-0");
     cardModalContent.classList.add("scale-95");
@@ -1114,12 +1109,14 @@ document.addEventListener("DOMContentLoaded", () => {
       cardElement.mount(cardElementMount);
     }
   }
+
   async function confirmSetupIntent(clientSecret) {
     await initStripeIfNeeded();
     pendingClientSecret = clientSecret;
     pendingMode = "setup";
     openCardModal();
   }
+
   async function confirmPaymentIntent(clientSecret) {
     await initStripeIfNeeded();
     pendingClientSecret = clientSecret;
