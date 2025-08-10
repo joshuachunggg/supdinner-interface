@@ -1062,7 +1062,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const redirectTo = `${location.origin}/`; // or a specific path if not at site root
+      const redirectTo = `https://www.supdinner.com/sign-up/`; // or a specific path if not at site root
       const { error } = await supabaseClient.auth.signUp({
         email,
         password: pass,
