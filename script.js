@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- STRIPE INIT ---
-    const STRIPE_PUBLISHABLE_KEY = 'pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa'; // test key (leave as-is)
+    const STRIPE_PUBLISHABLE_KEY = 'pk_live_51RoP0uP6irEQ7yILvYBuYB0jrRZtcl5iO0rqi5ozyIMrXpPIHdGVoFr0TWvJbjkZZXGkv6qeUewCS173UQ1qaMLh00juf0Lay2'; // test key (leave as-is)
     const COLLATERAL_CENTS_DEFAULT = 1000; // $10 hold until we add a DB column
     let stripe = null;
     let elements = null;
