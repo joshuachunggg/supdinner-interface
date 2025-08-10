@@ -210,17 +210,6 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional, ageRan
     }
   }
 
-  async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
-    // require authenticated session (JWT is sent automatically by supabase-js)
-    const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
-      body: { first_name, phone_number, age_range }
-    });
-    if (error) throw error;
-    if (data?.user_id) {
-      localStorage.setItem('supdinner_user_id', String(data.user_id));
-    }
-  }
-
   // create new if none — ensure NOT NULL columns have values
   if (!u) {
     const insert = {
@@ -249,6 +238,18 @@ async function ensureUserRowFromSession(phoneOptional, firstNameOptional, ageRan
     await supabaseClient.from('users').update(patch).eq('id', u.id);
   }
   return u.id;
+}
+
+// === Top-level: link or create profile via Edge Function ===
+async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
+  const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
+    body: { first_name, phone_number, age_range }
+  });
+  if (error) throw error;
+  if (data?.user_id) {
+    localStorage.setItem('supdinner_user_id', String(data.user_id));
+  }
+  return data?.user_id ?? null;
 }
 
   // --- RENDER TABS ---
