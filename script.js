@@ -1010,11 +1010,12 @@ document.addEventListener("DOMContentLoaded", () => {
         "join-after-confirm",
         {
           body: {
-            userId: resolvedUserId,
-            tableId: resolvedTableId,
-            intentType,          // "payment" | "setup"
-            intentId,            // pi_... or si_...
-            paymentMethodId,     // optional
+            userId: resolvedUserId || null,        // ok if null; server will fill
+            tableId: resolvedTableId || null,      // ok if null; server will fill
+            intentType,                            // "payment" | "setup" (ok if you omit; server will infer)
+            intentId,                              // ok if you omit; server will parse from clientSecret
+            paymentMethodId,                       // optional
+            clientSecret: pendingClientSecret,     // <-- add this
           },
         }
       );
