@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function clear() { sessionStorage.removeItem(KEY); }
     return { get, set, clear };
   })();
+  
   // --- STRIPE INIT ---
   const STRIPE_PUBLISHABLE_KEY =
     "pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa"; // test key (swap to live in prod)
@@ -25,30 +26,37 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- REDIRECT URL ---
   const EMAIL_REDIRECT_TO = `https://sup-380d9c.webflow.io/sign-up`; // or "/" if your app lives at root
 
-
   // state for Stripe modal confirmation
   let pendingClientSecret = null;
   let pendingMode = null; // 'setup' or 'payment'
   let pendingPostStripeAction = null; // deferred join after card confirm
 
   // --- SUPABASE CLIENT ---
-  const SUPABASE_URL = "https://ennlvlcogzowropkwbiu.supabase.co";
-  const SUPABASE_ANON_KEY =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc";
+  // Use production Supabase for development (easier than recreating everything locally)
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  
+  const SUPABASE_URL = "https://ennlvlcogzowropkwbiu.supabase.co";  // Always use production for now
+  
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc";  // Production
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  
+  // Log which environment we're using
+  console.log(`🔧 Environment: Development with Production Database`);
+  console.log(`🌐 Supabase URL: ${SUPABASE_URL}`);
 
-  // When a session starts (e.g., after email confirm), finish linking profile and refresh UI
+  // 🔧 FIX: Simplified auth state change handler
   supabaseClient.auth.onAuthStateChange(async (event, session) => {
     if (event === "SIGNED_IN" && session?.user) {
       const meta = session.user.user_metadata || {};
       try {
+        // Simplified: just try to link/create profile once
         await linkOrCreateProfile({
           first_name: meta.first_name,
           phone_number: meta.phone_number,
           age_range: meta.age_range,
         });
       } catch (e) {
-        console.warn("[post-confirm] link/create skipped:", e?.message || e);
+        console.warn("[post-confirm] profile setup failed:", e?.message || e);
       } finally {
         const accountModal = document.getElementById("account-modal");
         if (accountModal && !accountModal.classList.contains("hidden")) {
@@ -189,51 +197,62 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 300);
   }
 
-  // Ensures we have a numeric users.id (not just an auth session)
-  // Tries the Edge Function (service role) first, then client fallback.
+  // 🔧 FIX: Simplified profile management - removed redundant client-side logic
+  // All profile creation/linking is now handled by the Edge Function
+
+  // === Top-level: link or create profile via Edge Function ===
+  async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
+      try {
+          const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
+              body: { first_name, phone_number, age_range }
+          });
+          if (error) throw error;
+          if (data?.user_id) localStorage.setItem('supdinner_user_id', String(data.user_id));
+          return true;
+      } catch (err) {
+          // 401 is normal if no session yet (e.g., before email confirm)
+          if (err?.status === 401) {
+              console.warn('[link-or-create-profile] 401 (no session yet).');
+              return false;
+          }
+          console.error('[link-or-create-profile] failed', err);
+          // Don't rethrow—return false so UI can continue (prevents spinner hang)
+          return false;
+      }
+  }
+
+  // 🔧 FIX: Simplified user ID retrieval
   async function ensureNumericUserIdStrict() {
-    // already cached?
+    // Check cache first
     let localUserId = Number(localStorage.getItem("supdinner_user_id") ?? NaN);
     if (Number.isFinite(localUserId)) return localUserId;
 
-    // 1) ensure session
+    // Ensure session exists
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session?.user) return NaN;
 
-    // 2) try service-powered link/create
+    // Try to get/create profile via Edge Function
     try {
       const meta = session.user.user_metadata || {};
       const { data, error } = await supabaseClient.functions.invoke("link-or-create-profile", {
         body: {
           first_name: meta.first_name,
           phone_number: meta.phone_number,
-          age_range:   meta.age_range
+          age_range: meta.age_range
         }
       });
       if (!error && data?.user_id) {
         localStorage.setItem("supdinner_user_id", String(data.user_id));
         return Number(data.user_id);
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn("[ensureNumericUserIdStrict] profile creation failed:", err);
+    }
 
-    // 3) client fallback (RLS must allow it)
-    try {
-      const meta = session.user.user_metadata || {};
-      const created = await ensureUserRowFromSession(
-        meta.phone_number, meta.first_name, meta.age_range
-      );
-      if (created) {
-        localStorage.setItem("supdinner_user_id", String(created));
-        return Number(created);
-      }
-    } catch (_) {}
-
-    // 4) last check
-    localUserId = Number(localStorage.getItem("supdinner_user_id") ?? NaN);
-    return Number.isFinite(localUserId) ? localUserId : NaN;
+    return NaN;
   }
 
-  // Account modal
+  // Account modal functions
   function openAccount() {
     accountModal.classList.remove("hidden");
     setTimeout(() => {
@@ -269,103 +288,6 @@ document.addEventListener("DOMContentLoaded", () => {
         "Welcome to the table! We'll send the final details to your phone soon. See you there!";
     }
     showModalStep(3, joinModal);
-  }
-
-  // ===== Auth helpers (email/password) =====
-  async function ensureUserRowFromSession(
-    phoneOptional,
-    firstNameOptional,
-    ageRangeOptional
-  ) {
-    const {
-      data: { session },
-    } = await supabaseClient.auth.getSession();
-    if (!session || !session.user) return null;
-
-    const authId = session.user.id;
-    const email = session.user.email ?? null;
-
-    // already linked?
-    let { data: u } = await supabaseClient
-      .from("users")
-      .select("id, phone_number, first_name, age_range, auth_user_id, email")
-      .eq("auth_user_id", authId)
-      .maybeSingle();
-
-    // legacy row by phone? link it
-    if (!u && phoneOptional) {
-      const { data: legacy } = await supabaseClient
-        .from("users")
-        .select("id, phone_number, first_name, age_range, auth_user_id, email")
-        .eq("phone_number", phoneOptional)
-        .maybeSingle();
-
-      if (legacy && !legacy.auth_user_id) {
-        const patch = { auth_user_id: authId };
-        if (email && !legacy.email) patch.email = email;
-        if (firstNameOptional && !legacy.first_name)
-          patch.first_name = firstNameOptional;
-        if (ageRangeOptional && !legacy.age_range)
-          patch.age_range = ageRangeOptional;
-        const { error: upErr } = await supabaseClient
-          .from("users")
-          .update(patch)
-          .eq("id", legacy.id);
-        if (upErr) throw upErr;
-        return legacy.id;
-      }
-    }
-
-    // create new if none — ensure NOT NULL columns have values
-    if (!u) {
-      const insert = {
-        auth_user_id: authId,
-        email,
-        phone_number: phoneOptional || null,
-        first_name: (firstNameOptional && firstNameOptional.trim()) || "Friend",
-        age_range: (ageRangeOptional && ageRangeOptional.trim()) || "23-27",
-      };
-      const { data: created, error: insErr } = await supabaseClient
-        .from("users")
-        .insert(insert)
-        .select("id")
-        .single();
-      if (insErr) throw insErr;
-      return created.id;
-    }
-
-    // backfill missing fields if we can
-    const patch = {};
-    if (!u.phone_number && phoneOptional) patch.phone_number = phoneOptional;
-    if (!u.first_name && firstNameOptional)
-      patch.first_name = firstNameOptional;
-    if (!u.age_range && ageRangeOptional) patch.age_range = ageRangeOptional;
-    if (!u.email && email) patch.email = email;
-    if (Object.keys(patch).length) {
-      await supabaseClient.from("users").update(patch).eq("id", u.id);
-    }
-    return u.id;
-  }
-
-  // === Top-level: link or create profile via Edge Function ===
-  async function linkOrCreateProfile({ first_name, phone_number, age_range } = {}) {
-      try {
-          const { data, error } = await supabaseClient.functions.invoke('link-or-create-profile', {
-              body: { first_name, phone_number, age_range }
-          });
-          if (error) throw error;
-          if (data?.user_id) localStorage.setItem('supdinner_user_id', String(data.user_id));
-          return true;
-      } catch (err) {
-          // 401 is normal if no session yet (e.g., before email confirm)
-          if (err?.status === 401) {
-              console.warn('[link-or-create-profile] 401 (no session yet).');
-              return false;
-          }
-          console.error('[link-or-create-profile] failed', err);
-          // Don’t rethrow—return false so UI can continue (prevents spinner hang)
-          return false;
-      }
   }
 
   async function waitForSignup(tableId, userId, timeoutMs = 12000) {
