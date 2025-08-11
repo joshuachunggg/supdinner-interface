@@ -587,7 +587,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Always read table id from the button that owns the handler
-    const btn = /** @type {HTMLElement} */ (e.currentTarget);
+    // Use e.target and find the closest button (more reliable than e.currentTarget)
+    const btn = e.target.closest('.join-button');
     console.log("🔵 Button element:", btn);
     console.log("🔵 Button dataset:", btn?.dataset);
     console.log("🔵 Button dataset.tableId:", btn?.dataset?.tableId);
