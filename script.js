@@ -68,6 +68,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const logoutLink = document.getElementById("logout-link");
   const loginButton = document.getElementById("login-button");
 
+  // Page capability flags (safe even if modals aren't on this page)
+  const HAS_TABLES_UI  = !!(dayTabsContainer && tablesContainer);
+  const HAS_REQUEST_UI = !!document.getElementById("request-modal");
+  const HAS_ACCOUNT_UI = !!document.getElementById("account-modal");
+
+  // Safe event binding helper
+  const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
+
   // Join Modal elements
   const joinModal = document.getElementById("join-modal");
   const joinModalContent = document.getElementById("modal-content");
@@ -654,7 +662,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   // Join modal form (phone-first, legacy path still supported)
-  userInfoForm.addEventListener("submit", async (e) => {
+  on(userInfoForm, "submit", async (e) => {
     e.preventDefault();
     formError1.classList.add("hidden");
     joinSubmitButton.disabled = true;
@@ -692,68 +700,66 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Logout
-  logoutLink.addEventListener("click", (e) => {
+  on(logoutLink, "click", (e) => {
     e.preventDefault();
     localStorage.removeItem("supdinner_user_id");
     supabaseClient.auth.signOut().finally(refreshData);
   });
 
   // Request modal
-  requestTableBtn.addEventListener("click", () => openModal(requestModal));
-  closeRequestModal1.addEventListener("click", () => closeModal(requestModal));
-  closeRequestModal2.addEventListener("click", () => closeModal(requestModal));
-  requestModal.addEventListener("click", (e) => {
-    if (e.target === requestModal) closeModal(requestModal);
-  });
-  requestDisclaimerCheckbox.addEventListener("change", () => {
-    requestSubmitButton.disabled = !requestDisclaimerCheckbox.checked;
-  });
-  requestInfoForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    requestFormError.classList.add("hidden");
-    const formData = {
-      name: document.getElementById("request-name").value,
-      phone: document.getElementById("request-phone").value,
-      day: document.getElementById("request-day").value,
-      time: document.getElementById("request-time").value,
-      neighborhood: document.getElementById("request-neighborhood").value,
-      ageRange: document.getElementById("request-age-range").value,
-      theme: document.getElementById("request-theme").value,
-    };
-    try {
-      const { error } = await supabaseClient.functions.invoke(
-        "send-request-notification",
-        { body: formData }
-      );
-      if (error) throw error;
-      showModalStep(2, requestModal);
-    } catch (error) {
-      requestFormError.textContent = `Error: ${error.message}`;
-      requestFormError.classList.remove("hidden");
-    }
-  });
+  if(HAS_REQUEST_UI) {
+    on(requestTableBtn, "click", () => openModal(requestModal));
+    on(closeRequestModal1, "click", () => closeModal(requestModal));
+    on(closeRequestModal2, "click", () => closeModal(requestModal));
+    on(requestModal, "click", (e) => { if (e.target === requestModal) closeModal(requestModal); });
+    on(requestDisclaimerCheckbox, "change", () => { requestSubmitButton.disabled = !requestDisclaimerCheckbox.checked; });
+    on(requestInfoForm, "submit", async (e) => {
+      e.preventDefault();
+      requestFormError.classList.add("hidden");
+      const formData = {
+        name: document.getElementById("request-name").value,
+        phone: document.getElementById("request-phone").value,
+        day: document.getElementById("request-day").value,
+        time: document.getElementById("request-time").value,
+        neighborhood: document.getElementById("request-neighborhood").value,
+        ageRange: document.getElementById("request-age-range").value,
+        theme: document.getElementById("request-theme").value,
+      };
+      try {
+        const { error } = await supabaseClient.functions.invoke(
+          "send-request-notification",
+          { body: formData }
+        );
+        if (error) throw error;
+        showModalStep(2, requestModal);
+      } catch (error) {
+        requestFormError.textContent = `Error: ${error.message}`;
+        requestFormError.classList.remove("hidden");
+      }
+    });
+  }
 
   // Account modal events
-  loginButton.addEventListener("click", () => openAccount());
-  accountClose.addEventListener("click", () => closeAccount());
-  accountModal.addEventListener("click", (e) => {
+  on(loginButton, "click", () => openAccount());
+  on(accountClose, "click", () => closeAccount());
+  on(accountModal, "click", (e) => {
     if (e.target === accountModal) closeAccount();
   });
 
-  tabLogin.addEventListener("click", () => {
+  on(tabLogin, "click", () => {
     tabLogin.className = "px-3 py-1 rounded bg-gray-900 text-white";
     tabSignup.className = "px-3 py-1 rounded bg-gray-200";
     formLogin.classList.remove("hidden");
     formSignup.classList.add("hidden");
   });
-  tabSignup.addEventListener("click", () => {
+  on(tabSignup, "click", () => {
     tabSignup.className = "px-3 py-1 rounded bg-gray-900 text-white";
     tabLogin.className = "px-3 py-1 rounded bg-gray-200";
     formSignup.classList.remove("hidden");
     formLogin.classList.add("hidden");
   });
 
-  formLogin.addEventListener("submit", async (e) => {
+  on(formLogin, "submit", async (e) => {
     e.preventDefault();
     loginErrorBox.textContent = "";
     const email = document.getElementById("login-email").value.trim();
@@ -779,7 +785,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  formSignup.addEventListener("submit", async (e) => {
+  on(formSignup, "submit", async (e) => {
       e.preventDefault();
       signupErrorBox.textContent = "";
 
@@ -860,10 +866,15 @@ document.addEventListener("DOMContentLoaded", () => {
         console.warn('Stripe key missing; skipping card UI.');
         return null;
       }
-      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY, { advancedFraudSignals: false }); 
+      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY, { advancedFraudSignals: false });
       elements = stripe.elements();
-      cardElement = elements.create("card");
-      cardElement.mount(cardElementMount);
+      if (cardElementMount) {
+        cardElement = elements.create("card");
+        cardElement.mount(cardElementMount);
+      } else {
+        // No card UI on this page; that's fine.
+        cardElement = null;
+      }
     }
     return stripe;
   }
@@ -883,7 +894,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Stripe card form submit
-  cardForm.addEventListener("submit", async (e) => {
+  on(cardForm, "submit", async (e) => {
     e.preventDefault();
     if (!pendingClientSecret || !pendingMode) return;
 
@@ -923,10 +934,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- REFRESH LOGIC ---
   async function refreshData() {
-    // If session exists, sync numeric users.id to localStorage for your existing flows
-    const {
-      data: { session },
-    } = await supabaseClient.auth.getSession();
+    const { data: { session } } = await supabaseClient.auth.getSession();
+
+    // Try to resolve numeric users.id and cache it
     if (session?.user) {
       try {
         const userId = await ensureUserRowFromSession();
@@ -936,8 +946,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Reflect auth in UI immediately
     const localUserId = localStorage.getItem("supdinner_user_id");
-    if (session?.user) loginButton.classList.add("hidden");
-    else               loginButton.classList.remove("hidden");
+    if (loginButton) {
+      if (session?.user) loginButton.classList.add("hidden");
+      else               loginButton.classList.remove("hidden");
+    }
 
     if (localUserId) {
       // 1) profile
@@ -957,19 +969,19 @@ document.addEventListener("DOMContentLoaded", () => {
           isSuspended: false,
           suspensionEndDate: null,
         };
-        userStatusDiv.classList.add("hidden");
-        if (activeDate) await renderTables(activeDate);
+        if (userStatusDiv) userStatusDiv.classList.add("hidden");
+        if (HAS_TABLES_UI && activeDate) await renderTables(activeDate);
         return;
       }
 
-      // 2) joinedTableId only for future dinners (RLS-safe: no join)
+      // 2) joined table (future only)
       const { data: mySignups } = await supabaseClient
         .from("signups")
         .select("table_id")
         .eq("user_id", localUserId);
 
       let joinedTableId = null;
-      if (mySignups && mySignups.length) {
+      if (mySignups?.length) {
         const nowIso = new Date().toISOString();
         const tableIds = [...new Set(mySignups.map((s) => s.table_id))];
         const { data: myTables } = await supabaseClient
@@ -979,7 +991,7 @@ document.addEventListener("DOMContentLoaded", () => {
           .gte("dinner_date", nowIso)
           .order("dinner_date", { ascending: true })
           .limit(1);
-        if (myTables && myTables.length) joinedTableId = myTables[0].id;
+        if (myTables?.length) joinedTableId = myTables[0].id;
       }
 
       // 3) waitlists
@@ -1000,14 +1012,15 @@ document.addEventListener("DOMContentLoaded", () => {
         phone: profile.phone_number,
       };
 
-      userGreetingSpan.textContent = `Welcome, ${profile.first_name}!`;
-      userStatusDiv.classList.remove("hidden");
-      const reqName = document.getElementById("request-name");
+      if (userGreetingSpan) userGreetingSpan.textContent = `Welcome, ${profile.first_name}!`;
+      if (userStatusDiv) userStatusDiv.classList.remove("hidden");
+
+      const reqName  = document.getElementById("request-name");
       const reqPhone = document.getElementById("request-phone");
-      if (reqName) reqName.value = profile.first_name || "";
+      if (reqName)  reqName.value  = profile.first_name || "";
       if (reqPhone) reqPhone.value = profile.phone_number || "";
 
-      // 5) ensure Stripe customer
+      // 5) ensure Stripe customer (ignore errors)
       try {
         await supabaseClient.functions.invoke("stripe-create-customer", {
           body: { userId: currentUserState.userId },
@@ -1016,9 +1029,9 @@ document.addEventListener("DOMContentLoaded", () => {
         console.error("Error ensuring Stripe customer:", err);
       }
     } else {
-      loginButton.classList.remove("hidden");
+      if (loginButton) loginButton.classList.remove("hidden");
       currentUserState = {
-        isLoggedIn: !!session?.user, // show logged-in UI even if numeric id isn't ready yet
+        isLoggedIn: !!session?.user,
         userId: null,
         joinedTableId: null,
         waitlistedTableIds: [],
@@ -1026,56 +1039,56 @@ document.addEventListener("DOMContentLoaded", () => {
         suspensionEndDate: null,
       };
       if (session?.user) {
-        userGreetingSpan.textContent = "Welcome!";
-        userStatusDiv.classList.remove("hidden");
+        if (userGreetingSpan) userGreetingSpan.textContent = "Welcome!";
+        if (userStatusDiv) userStatusDiv.classList.remove("hidden");
       } else {
-        userStatusDiv.classList.add("hidden");
+        if (userStatusDiv) userStatusDiv.classList.add("hidden");
       }
     }
 
-    if (activeDate) await renderTables(activeDate);
+    if (HAS_TABLES_UI && activeDate) await renderTables(activeDate);
   }
 
   // --- INIT ---
-  closeButton1.addEventListener("click", () => closeModal(joinModal));
-  closeButton3.addEventListener("click", () => closeModal(joinModal));
-  joinModal.addEventListener("click", (e) => {
-    if (e.target === joinModal) closeModal(joinModal);
-  });
-  closeCardModal.addEventListener("click", () => closeCardModalModalOnly());
-  cardModal.addEventListener("click", (e) => {
-    if (e.target === cardModal) closeCardModalModalOnly();
-  });
+  on(closeButton1, "click", () => closeModal(joinModal));
+  on(closeButton3, "click", () => closeModal(joinModal));
+  on(joinModal, "click", (e) => { if (e.target === joinModal) closeModal(joinModal); });
+  on(closeCardModal, "click", () => closeCardModalModalOnly());
+  on(cardModal, "click", (e) => { if (e.target === cardModal) closeCardModalModalOnly(); });
 
-  disclaimerCheckbox.addEventListener("change", () => {
+  on(disclaimerCheckbox, "change", () => {
     if (isNewUserFlow) joinSubmitButton.disabled = !disclaimerCheckbox.checked;
   });
 
   const initialize = async () => {
-      loadingSpinner.classList.remove('hidden');
-      try {
-          await initStripeIfNeeded();
+    if (loadingSpinner) loadingSpinner.classList.remove('hidden');
+    try {
+      await initStripeIfNeeded();
+      await refreshData();
 
-          // get dates
-          const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
-          if (datesError) throw datesError;
+      if (HAS_TABLES_UI) {
+        const { data: dates, error: datesError } = await supabaseClient.rpc('get_distinct_upcoming_dates');
+        if (datesError) throw datesError;
 
-          if (dates && dates.length > 0) {
-              renderTabs(dates);
-              await refreshData();
-          } else {
-              noTablesMessage.textContent = 'No upcoming dinners are scheduled. Check back soon!';
-              noTablesMessage.classList.remove('hidden');
-          }
-      } catch (err) {
-          console.error('Initialization failed:', err);
-          tablesContainer.innerHTML = `
-              <p class="text-center text-red-500">
-                  Could not initialize. Please refresh. Error: ${err.message || err}
-              </p>`;
-      } finally {
-          loadingSpinner.classList.add('hidden');
+        if (dates && dates.length > 0) {
+          renderTabs(dates);
+          await renderTables(activeDate);
+        } else if (noTablesMessage) {
+          noTablesMessage.textContent = 'No upcoming dinners are scheduled. Check back soon!';
+          noTablesMessage.classList.remove('hidden');
+        }
       }
+    } catch (err) {
+      console.error('Initialization failed:', err);
+      if (tablesContainer) {
+        tablesContainer.innerHTML = `
+          <p class="text-center text-red-500">
+            Could not initialize. Please refresh. Error: ${err.message || err}
+          </p>`;
+      }
+    } finally {
+      if (loadingSpinner) loadingSpinner.classList.add('hidden');
+    }
   };
 
   initialize();
