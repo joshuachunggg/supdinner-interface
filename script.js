@@ -1,6 +1,19 @@
 // main.js
 
 document.addEventListener("DOMContentLoaded", () => {
+  // ---- JOIN FLOW STATE (safe across re-renders/modals) -----------------------
+  const JoinState = (() => {
+    const KEY = "supdinner_join_state";
+    function get() {
+      try { return JSON.parse(sessionStorage.getItem(KEY) || "{}"); } catch { return {}; }
+    }
+    function set(patch) {
+      const cur = get();
+      sessionStorage.setItem(KEY, JSON.stringify({ ...cur, ...patch }));
+    }
+    function clear() { sessionStorage.removeItem(KEY); }
+    return { get, set, clear };
+  })();
   // --- STRIPE INIT ---
   const STRIPE_PUBLISHABLE_KEY =
     "pk_test_51RoP12090xmS47wUC7t9RjXOtqLIkZnKIphRsJaB5V2mH4MyWFT3WggYIEsr2EaDot78tYF3bZ5wVr1CC1Dc6xGy00rI5QkBOa"; // test key (swap to live in prod)
@@ -628,20 +641,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const collateral_cents = COLLATERAL_CENTS_DEFAULT;
       if (daysDiff > 7) {
-        const { data: siRes, error: siErr } = await supabaseClient.functions.invoke(
-          "stripe-create-setup-intent",
-          { body: { userId: currentUserState.userId, tableId: selectedTableId, collateral_cents } }
-        );
+        const { data: siRes } = await supabaseClient.functions.invoke("stripe-create-setup-intent", {
+          body: { userId: Number(currentUserState.userId), tableId: Number(selectedTableId), collateral_cents }
+        });
+        const clientSecret = siRes?.client_secret;
+        if (!clientSecret || !String(clientSecret).includes("_secret_")) {
+          throw new Error("Server did not return a SetupIntent client_secret.");
+        }
+        JoinState.set({ mode: "setup", clientSecret });
+        openCardModal();
+
         if (siErr || !siRes?.client_secret) throw siErr || new Error("Missing client_secret");
         await confirmSetupIntent(siRes.client_secret);
       } else {
-        const { data: piRes, error: piErr } = await supabaseClient.functions.invoke(
-          "stripe-create-hold",
-          { body: { userId: currentUserState.userId, tableId: selectedTableId, collateral_cents } }
-        );
-        if (piErr) throw piErr;
-
+        const { data: piRes } = await supabaseClient.functions.invoke("stripe-create-hold", {
+          body: { userId: Number(currentUserState.userId), tableId: Number(selectedTableId), collateral_cents }
+        });
         const clientSecret = piRes?.client_secret;
+        if (!clientSecret || !String(clientSecret).includes("_secret_")) {
+          throw new Error("Server did not return a PaymentIntent client_secret.");
+        }
+        JoinState.set({ mode: "payment", clientSecret });
+        openCardModal(); // your existing function to show the card modal
         // Defensive: client secret must contain "_secret_"
         if (!clientSecret || !String(clientSecret).includes("_secret_")) {
           throw new Error("Server did not return a PaymentIntent client_secret. Check your stripe-create-hold function.");
@@ -944,17 +965,9 @@ document.addEventListener("DOMContentLoaded", () => {
     cardErrors.classList.add("hidden");
     cardErrors.textContent = "";
 
-    if (!stripe || !cardElement) {
-      cardErrors.textContent = "Card UI not ready. Please reload.";
-      cardErrors.classList.remove("hidden");
-      return;
-    }
-
-    // These are set earlier in your flow; if missing, we’ll fallback from metadata.
-    // pendingMode: "payment" | "setup"
-    // pendingClientSecret: string
-    if (!pendingClientSecret || !pendingMode) {
-      cardErrors.textContent = "Nothing to confirm. Please try again.";
+    const { mode, clientSecret } = JoinState.get();
+    if (!stripe || !cardElement || !mode || !clientSecret) {
+      cardErrors.textContent = "Card is not ready. Please close and try again.";
       cardErrors.classList.remove("hidden");
       return;
     }
@@ -962,72 +975,36 @@ document.addEventListener("DOMContentLoaded", () => {
     cardConfirmButton.disabled = true;
 
     try {
-      let intentType = pendingMode;        // "payment" | "setup"
       let intentId = null;
       let paymentMethodId = null;
-      let meta = null;
 
-      if (intentType === "setup") {
-        const result = await stripe.confirmCardSetup(pendingClientSecret, {
-          payment_method: { card: cardElement },
-        });
+      if (mode === "setup") {
+        const result = await stripe.confirmCardSetup(clientSecret, { payment_method: { card: cardElement } });
         if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
         intentId = result.setupIntent.id;
         paymentMethodId = result.setupIntent.payment_method || null;
-        meta = result.setupIntent.metadata || {};
       } else {
-        const result = await stripe.confirmCardPayment(pendingClientSecret, {
-          payment_method: { card: cardElement },
-        });
+        const result = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: cardElement } });
         if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
         intentId = result.paymentIntent.id;
         paymentMethodId = result.paymentIntent.payment_method || null;
-        meta = result.paymentIntent.metadata || {};
       }
 
-      // Resolve IDs robustly: prefer state, fallback to metadata from the Stripe intent
-      const resolvedUserId  = Number(currentUserState?.userId) || Number(meta?.userId);
-      const resolvedTableId = Number(selectedTableId)          || Number(meta?.tableId);
-
-      // Hard validation before we call the Edge Function
-      if (
-        !Number.isFinite(resolvedUserId) ||
-        !Number.isFinite(resolvedTableId) ||
-        !intentType ||
-        !intentId
-      ) {
-        console.warn("[join-after-confirm] bad payload", {
-          resolvedUserId, resolvedTableId, intentType, intentId, meta
-        });
-        throw new Error("Could not resolve join details. Please close the modal and try again.");
-      }
-
-      // Call your server to finalize: verify intent + upsert signups + update collateral
-      const { data: jfRes, error: jfErr } = await supabaseClient.functions.invoke(
-        "join-after-confirm",
-        {
-          body: {
-            userId: resolvedUserId || null,        // ok if null; server will fill
-            tableId: resolvedTableId || null,      // ok if null; server will fill
-            intentType,                            // "payment" | "setup" (ok if you omit; server will infer)
-            intentId,                              // ok if you omit; server will parse from clientSecret
-            paymentMethodId,                       // optional
-            clientSecret: pendingClientSecret,     // <-- add this
-          },
+      // Finalize join on the server — send only clientSecret (server derives everything)
+      const { data: jfRes, error: jfErr } = await supabaseClient.functions.invoke("join-after-confirm", {
+        body: {
+          clientSecret,                 // <-- single source of truth
+          // Optional extras (nice but not required):
+          intentType: mode,             // "payment" | "setup"
+          intentId,                     // pi_... or si_...
+          paymentMethodId: paymentMethodId || null,
         }
-      );
-      if (jfErr) {
-        console.warn("join-after-confirm error:", jfErr);
-        throw new Error(jfErr.message || "Could not finalize your join.");
-      }
-      if (!jfRes?.ok) {
-        throw new Error("Join not finalized yet. Please wait a moment and refresh.");
-      }
+      });
+      if (jfErr) throw new Error(jfErr.message || "Could not finalize your join.");
+      if (!jfRes?.ok) throw new Error("Join not finalized yet. Please wait a moment and refresh.");
 
-      // Poll briefly in case the DB is still catching up (idempotent)
-      await waitForSignup(resolvedTableId, resolvedUserId, 12000);
-
-      closeCardModalModalOnly();
+      JoinState.clear();
+      closeCardModalModalOnly?.();
       await refreshData();
       showSuccessStep?.();
     } catch (err) {
