@@ -473,7 +473,9 @@ document.addEventListener("DOMContentLoaded", () => {
                           button = createButton("In Another Table", ["btn-disabled"], true);
                       } else {
                           button = createButton("Join Table", ["join-button", "btn-primary"]);
+                          button.setAttribute("data-table-id", table.id);
                           button.dataset.tableId = table.id;
+                          console.log("🔵 Created join button with tableId:", table.id, "dataset:", button.dataset.tableId);
                       }
                   }
               }
@@ -551,7 +553,10 @@ document.addEventListener("DOMContentLoaded", () => {
           });
 
           // Bind actions
-          document.querySelectorAll(".join-button").forEach((btn) => btn.addEventListener("click", handleJoinClick));
+          document.querySelectorAll(".join-button").forEach((btn) => {
+              console.log("🔵 Attaching click listener to button:", btn.dataset.tableId);
+              btn.addEventListener("click", handleJoinClick);
+          });
           document.querySelectorAll(".leave-button").forEach((btn) => btn.addEventListener("click", handleLeaveClick));
           document.querySelectorAll(".join-waitlist-button").forEach((btn) => btn.addEventListener("click", handleJoinWaitlistClick));
           document.querySelectorAll(".leave-waitlist-button").forEach((btn) => btn.addEventListener("click", handleLeaveWaitlistClick));
