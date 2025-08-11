@@ -609,8 +609,29 @@ document.addEventListener("DOMContentLoaded", () => {
       openAccount();
       return;
     }
-    selectedTableId = parseInt(e.target.dataset.tableId);
+
+    // Always read attributes from the button that has the listener
+    const btn = /** @type {HTMLElement} */ (e.currentTarget);
+    const tableIdParsed = Number(btn?.dataset?.tableId ?? NaN);
+    if (!Number.isFinite(tableIdParsed)) {
+      console.warn("[join] missing/invalid tableId from button dataset:", btn?.dataset);
+      alert("Could not figure out which table you meant to join. Please try again.");
+      return;
+    }
+    selectedTableId = tableIdParsed;
     signupAction = "join";
+
+    // Make sure we have a numeric user id
+    let uid = Number(currentUserState?.userId ?? NaN);
+    if (!Number.isFinite(uid)) {
+      // try to recover once
+      await refreshData();
+      uid = Number(currentUserState?.userId ?? NaN);
+      if (!Number.isFinite(uid)) {
+        openAccount();
+        return;
+      }
+    }
 
     // Calculate days difference for setup vs hold
     const { data: t } = await supabaseClient
@@ -628,26 +649,22 @@ document.addEventListener("DOMContentLoaded", () => {
       daysDiff = (dinnerDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
     }
 
-    // Create intent on the backend, confirm it on the frontend
     try {
       const stripeReady = await initStripeIfNeeded();
       if (!stripeReady) {
-        console.warn('Stripe unavailable; proceeding without collateral.');
-        // (Optional) Show an inline message here.
+        console.warn("Stripe unavailable; proceeding without collateral.");
         showSuccessStep();
         await refreshData();
         return;
       }
 
       const collateral_cents = COLLATERAL_CENTS_DEFAULT;
-      const payload = {
-        userId: Number(currentUserState.userId),
-        tableId: Number(selectedTableId),
-        collateral_cents
-      };
+      const payload = { userId: uid, tableId: selectedTableId, collateral_cents };
+
+      // helpful trace
+      console.log("[join] creating intent with payload:", payload);
 
       if (daysDiff > 7) {
-        // SetupIntent path
         const { data, error } = await supabaseClient.functions.invoke(
           "stripe-create-setup-intent",
           { body: payload }
@@ -660,9 +677,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         JoinState.set({ mode: "setup", clientSecret });
-        openCardModal(); // do NOT call confirm here; user confirms on the card form submit
+        openCardModal();
       } else {
-        // PaymentIntent (hold) path
         const { data, error } = await supabaseClient.functions.invoke(
           "stripe-create-hold",
           { body: payload }
@@ -675,7 +691,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         JoinState.set({ mode: "payment", clientSecret });
-        openCardModal(); // do NOT call confirm here; user confirms on the card form submit
+        openCardModal();
       }
     } catch (err) {
       alert(`Could not start join: ${err?.message || err}`);
