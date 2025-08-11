@@ -609,8 +609,15 @@ document.addEventListener("DOMContentLoaded", () => {
           "stripe-create-hold",
           { body: { userId: currentUserState.userId, tableId: selectedTableId, collateral_cents } }
         );
-        if (piErr || !piRes?.client_secret) throw piErr || new Error("Missing client_secret");
-        await confirmPaymentIntent(piRes.client_secret);
+        if (piErr) throw piErr;
+
+        const clientSecret = piRes?.client_secret;
+        // Defensive: client secret must contain "_secret_"
+        if (!clientSecret || !String(clientSecret).includes("_secret_")) {
+          throw new Error("Server did not return a PaymentIntent client_secret. Check your stripe-create-hold function.");
+        }
+
+        await confirmPaymentIntent(clientSecret);
       }
     } catch (err) {
       alert(`Could not start join: ${err?.message || err}`);
@@ -874,7 +881,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.warn('Stripe key missing; skipping card UI.');
         return null;
       }
-      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY, { advancedFraudSignals: false });
+      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY);
       elements = stripe.elements();
       if (cardElementMount) {
         cardElement = elements.create("card");
@@ -904,6 +911,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Stripe card form submit
   on(cardForm, "submit", async (e) => {
     e.preventDefault();
+    console.log("[CardConfirm] mode:", pendingMode, "secret starts with:", String(pendingClientSecret).slice(0, 10));
     if (!pendingClientSecret || !pendingMode) return;
 
     cardConfirmButton.disabled = true;
