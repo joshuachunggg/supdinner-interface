@@ -160,7 +160,6 @@ document.addEventListener("DOMContentLoaded", () => {
         requestFormError.classList.add("hidden");
         requestSubmitButton.disabled = true;
       }
-      if (modal === loginModal) loginFormError.classList.add("hidden");
       refreshData();
     }, 300);
   }
@@ -861,7 +860,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.warn('Stripe key missing; skipping card UI.');
         return null;
       }
-      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY);
+      stripe   = window.Stripe(STRIPE_PUBLISHABLE_KEY, { advancedFraudSignals: false }); 
       elements = stripe.elements();
       cardElement = elements.create("card");
       cardElement.mount(cardElementMount);
@@ -935,11 +934,12 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch {}
     }
 
+    // Reflect auth in UI immediately
     const localUserId = localStorage.getItem("supdinner_user_id");
+    if (session?.user) loginButton.classList.add("hidden");
+    else               loginButton.classList.remove("hidden");
 
     if (localUserId) {
-      loginButton.classList.add("hidden");
-
       // 1) profile
       const { data: profile, error: pErr } = await supabaseClient
         .from("users")
@@ -1018,14 +1018,19 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       loginButton.classList.remove("hidden");
       currentUserState = {
-        isLoggedIn: false,
+        isLoggedIn: !!session?.user, // show logged-in UI even if numeric id isn't ready yet
         userId: null,
         joinedTableId: null,
         waitlistedTableIds: [],
         isSuspended: false,
         suspensionEndDate: null,
       };
-      userStatusDiv.classList.add("hidden");
+      if (session?.user) {
+        userGreetingSpan.textContent = "Welcome!";
+        userStatusDiv.classList.remove("hidden");
+      } else {
+        userStatusDiv.classList.add("hidden");
+      }
     }
 
     if (activeDate) await renderTables(activeDate);
