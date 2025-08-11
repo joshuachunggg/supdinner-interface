@@ -702,9 +702,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-    // wherever you open the join/card modal
-  selectedTableId = Number(btn.dataset.tableId || btn.getAttribute("data-table-id"));
-
   // Join modal form (phone-first, legacy path still supported)
   on(userInfoForm, "submit", async (e) => {
     e.preventDefault();
