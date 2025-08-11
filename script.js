@@ -40,9 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubmx2bGNvZ3pvd3JvcGt3Yml1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MTIyMTAsImV4cCI6MjA2OTQ4ODIxMH0.dCsyTAsAhcvSpeUMxWSyo_9praZC2wPDzmb3vCkHpPc";  // Production
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   
-  // Log which environment we're using
-  console.log(`🔧 Environment: Development with Production Database`);
-  console.log(`🌐 Supabase URL: ${SUPABASE_URL}`);
+        // Environment is production Supabase for development
 
   // 🔧 FIX: Simplified auth state change handler
   supabaseClient.auth.onAuthStateChange(async (event, session) => {
@@ -475,7 +473,6 @@ document.addEventListener("DOMContentLoaded", () => {
                           button = createButton("Join Table", ["join-button", "btn-primary"]);
                           button.setAttribute("data-table-id", table.id);
                           button.dataset.tableId = table.id;
-                          console.log("🔵 Created join button with tableId:", table.id, "dataset:", button.dataset.tableId);
                       }
                   }
               }
@@ -553,10 +550,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
 
           // Bind actions
-          document.querySelectorAll(".join-button").forEach((btn) => {
-              console.log("🔵 Attaching click listener to button:", btn.dataset.tableId);
-              btn.addEventListener("click", handleJoinClick);
-          });
+          document.querySelectorAll(".join-button").forEach((btn) => btn.addEventListener("click", handleJoinClick));
           document.querySelectorAll(".leave-button").forEach((btn) => btn.addEventListener("click", handleLeaveClick));
           document.querySelectorAll(".join-waitlist-button").forEach((btn) => btn.addEventListener("click", handleJoinWaitlistClick));
           document.querySelectorAll(".leave-waitlist-button").forEach((btn) => btn.addEventListener("click", handleLeaveWaitlistClick));
@@ -576,29 +570,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- EVENT HANDLERS ---
   const handleJoinClick = async (e) => {
-    console.log("🔵 Join button clicked!", e.target.dataset.tableId);
-          // Must have an auth session at least
-      console.log("🔵 Getting auth session...");
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      console.log("🔵 Auth session:", session ? "exists" : "none");
+    // Must have an auth session at least
+    const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session?.user) {
       openAccount();
       return;
     }
 
-    // Always read table id from the button that owns the handler
-    // Use e.target and find the closest button (more reliable than e.currentTarget)
+    // Get the tableId from the button (handle clicks on child elements)
     const btn = e.target.closest('.join-button');
-    console.log("🔵 Button element:", btn);
-    console.log("🔵 Button dataset:", btn?.dataset);
-    console.log("🔵 Button dataset.tableId:", btn?.dataset?.tableId);
-    const tableIdParsed = Number(btn?.dataset?.tableId ?? NaN);
-    if (!Number.isFinite(tableIdParsed)) {
-      console.warn("[join] invalid tableId on button:", btn?.dataset);
-      alert("Could not figure out which table to join. Please try again.");
+    const tableId = btn?.dataset?.tableId;
+    
+    if (!tableId) {
+      showError("Could not figure out which table to join. Please try again.");
       return;
     }
-    selectedTableId = tableIdParsed;
+    
+    selectedTableId = Number(tableId);
     signupAction = "join";
 
     // 🔒 Ensure users.id exists before proceeding (no modal bounce)
@@ -1120,7 +1108,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // 5) ensure Stripe customer (ignore errors)
       try {
-        console.log("🔵 Calling stripe-create-customer function...");
         await supabaseClient.functions.invoke("stripe-create-customer", {
           body: { userId: currentUserState.userId },
         });
