@@ -311,6 +311,21 @@ document.addEventListener("DOMContentLoaded", () => {
       }
   }
 
+  async function waitForSignup(tableId, userId, timeoutMs = 12000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const { data, error } = await supabaseClient
+        .from("signups")
+        .select("id")
+        .eq("table_id", tableId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (data) return true;
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return false;
+  }
+
   // --- RENDER TABS ---
   const renderTabs = (dates) => {
     const dayNames = [
@@ -911,7 +926,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Stripe card form submit
   on(cardForm, "submit", async (e) => {
     e.preventDefault();
-    console.log("[CardConfirm] mode:", pendingMode, "secret starts with:", String(pendingClientSecret).slice(0, 10));
     if (!pendingClientSecret || !pendingMode) return;
 
     cardConfirmButton.disabled = true;
@@ -919,25 +933,44 @@ document.addEventListener("DOMContentLoaded", () => {
     cardErrors.textContent = "";
 
     try {
-      let result;
+      let result, intentId, intentType, paymentMethodId = null;
+
       if (pendingMode === "setup") {
         result = await stripe.confirmCardSetup(pendingClientSecret, {
           payment_method: { card: cardElement },
         });
+        if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
+        intentId = result.setupIntent.id;
+        intentType = "setup";
+        paymentMethodId = result.setupIntent.payment_method || null;
       } else {
         result = await stripe.confirmCardPayment(pendingClientSecret, {
           payment_method: { card: cardElement },
         });
+        if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
+        intentId = result.paymentIntent.id;
+        intentType = "payment";
+        paymentMethodId = result.paymentIntent.payment_method || null;
       }
 
-      if (result.error) {
-        cardErrors.textContent = result.error.message || "Card confirmation failed.";
-        cardErrors.classList.remove("hidden");
-        cardConfirmButton.disabled = false;
-        return;
-      }
+      // Ask the backend to finalize the join ASAP (idempotent).
+      const { data: joinRes, error: joinErr } = await supabaseClient.functions.invoke(
+        "join-after-confirm",
+        {
+          body: {
+            userId: Number(currentUserState.userId),
+            tableId: Number(selectedTableId),
+            intentType,                // "setup" | "payment"
+            intentId,                  // si_... or pi_...
+            paymentMethodId,          // optional; helps your DB
+          },
+        }
+      );
+      if (joinErr) console.warn("join-after-confirm error:", joinErr);
 
-      // Success: backend should finalize the join.
+      // Wait briefly for DB to reflect the signup (handles webhook lag too)
+      await waitForSignup(Number(selectedTableId), Number(currentUserState.userId), 12000);
+
       closeCardModalModalOnly();
       await refreshData();
       showSuccessStep();
