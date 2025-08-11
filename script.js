@@ -26,20 +26,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // When a session starts (e.g., after email confirm), finish linking profile and refresh UI
   supabaseClient.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-          try {
-              await linkOrCreateProfile({}); // safe no-op if already linked
-          } catch (e) {
-              console.warn('[post-confirm] link/create skipped:', e?.message || e);
-          } finally {
-              // close modal if open
-              const accountModal = document.getElementById('account-modal');
-              if (accountModal && !accountModal.classList.contains('hidden')) {
-                  accountModal.classList.add('hidden');
-              }
-              await refreshData();
-          }
+    if (event === "SIGNED_IN" && session?.user) {
+      const meta = session.user.user_metadata || {};
+      try {
+        await linkOrCreateProfile({
+          first_name: meta.first_name,
+          phone_number: meta.phone_number,
+          age_range: meta.age_range,
+        });
+      } catch (e) {
+        console.warn("[post-confirm] link/create skipped:", e?.message || e);
+      } finally {
+        const accountModal = document.getElementById("account-modal");
+        if (accountModal && !accountModal.classList.contains("hidden")) {
+          accountModal.classList.add("hidden");
+        }
+        await refreshData();
       }
+    }
   });
 
   // --- GLOBAL STATE ---
@@ -766,18 +770,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const password = document.getElementById("login-password").value;
 
     try {
-      const { error } = await supabaseClient.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       if (error) throw error;
 
-      // We may not have phone/first/age here—pass empty; function won’t overwrite non-nulls.
+      // Pass whatever metadata the auth user has (from sign-up)
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      const meta = session?.user?.user_metadata || {};
       try {
-        await linkOrCreateProfile({});
-      } catch (e) {
-        console.warn('[login] link/create skipped:', e?.message || e);
+        await linkOrCreateProfile({
+          first_name: meta.first_name,
+          phone_number: meta.phone_number,
+          age_range: meta.age_range,
+        });
+      } catch (e1) {
+        console.warn("[login] link/create skipped:", e1?.message || e1);
       }
+
       closeAccount();
       await refreshData();
     } catch (e2) {
@@ -936,16 +944,35 @@ document.addEventListener("DOMContentLoaded", () => {
   async function refreshData() {
     const { data: { session } } = await supabaseClient.auth.getSession();
 
-    // Try to resolve numeric users.id and cache it
-    if (session?.user) {
+    // If we have a session but no numeric user id yet, try to create/link via Edge Function first.
+    let localUserId = localStorage.getItem("supdinner_user_id");
+    if (session?.user && !localUserId) {
+      const meta = session.user.user_metadata || {};
       try {
-        const userId = await ensureUserRowFromSession();
+        const ok = await linkOrCreateProfile({
+          first_name: meta.first_name,
+          phone_number: meta.phone_number,
+          age_range: meta.age_range,
+        });
+        if (ok) localUserId = localStorage.getItem("supdinner_user_id");
+      } catch {}
+    }
+
+    // Fallback: create the row from the client (RLS must allow it)
+    if (session?.user && !localUserId) {
+      const meta = session.user.user_metadata || {};
+      try {
+        const userId = await ensureUserRowFromSession(
+          meta.phone_number,
+          meta.first_name,
+          meta.age_range
+        );
+        if (userId) localUserId = String(userId);
         if (userId) localStorage.setItem("supdinner_user_id", String(userId));
       } catch {}
     }
 
     // Reflect auth in UI immediately
-    const localUserId = localStorage.getItem("supdinner_user_id");
     if (loginButton) {
       if (session?.user) loginButton.classList.add("hidden");
       else               loginButton.classList.remove("hidden");
@@ -1029,7 +1056,8 @@ document.addEventListener("DOMContentLoaded", () => {
         console.error("Error ensuring Stripe customer:", err);
       }
     } else {
-      if (loginButton) loginButton.classList.remove("hidden");
+      // No numeric user row yet
+      if (loginButton && !session?.user) loginButton.classList.remove("hidden");
       currentUserState = {
         isLoggedIn: !!session?.user,
         userId: null,
