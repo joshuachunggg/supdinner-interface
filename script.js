@@ -189,6 +189,50 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 300);
   }
 
+  // Ensures we have a numeric users.id (not just an auth session)
+  // Tries the Edge Function (service role) first, then client fallback.
+  async function ensureNumericUserIdStrict() {
+    // already cached?
+    let localUserId = Number(localStorage.getItem("supdinner_user_id") ?? NaN);
+    if (Number.isFinite(localUserId)) return localUserId;
+
+    // 1) ensure session
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session?.user) return NaN;
+
+    // 2) try service-powered link/create
+    try {
+      const meta = session.user.user_metadata || {};
+      const { data, error } = await supabaseClient.functions.invoke("link-or-create-profile", {
+        body: {
+          first_name: meta.first_name,
+          phone_number: meta.phone_number,
+          age_range:   meta.age_range
+        }
+      });
+      if (!error && data?.user_id) {
+        localStorage.setItem("supdinner_user_id", String(data.user_id));
+        return Number(data.user_id);
+      }
+    } catch (_) {}
+
+    // 3) client fallback (RLS must allow it)
+    try {
+      const meta = session.user.user_metadata || {};
+      const created = await ensureUserRowFromSession(
+        meta.phone_number, meta.first_name, meta.age_range
+      );
+      if (created) {
+        localStorage.setItem("supdinner_user_id", String(created));
+        return Number(created);
+      }
+    } catch (_) {}
+
+    // 4) last check
+    localUserId = Number(localStorage.getItem("supdinner_user_id") ?? NaN);
+    return Number.isFinite(localUserId) ? localUserId : NaN;
+  }
+
   // Account modal
   function openAccount() {
     accountModal.classList.remove("hidden");
@@ -605,35 +649,35 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- EVENT HANDLERS ---
   const handleJoinClick = async (e) => {
-    if (!currentUserState.isLoggedIn) {
+    // Must have an auth session at least
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session?.user) {
       openAccount();
       return;
     }
 
-    // Always read attributes from the button that has the listener
+    // Always read table id from the button that owns the handler
     const btn = /** @type {HTMLElement} */ (e.currentTarget);
     const tableIdParsed = Number(btn?.dataset?.tableId ?? NaN);
     if (!Number.isFinite(tableIdParsed)) {
-      console.warn("[join] missing/invalid tableId from button dataset:", btn?.dataset);
-      alert("Could not figure out which table you meant to join. Please try again.");
+      console.warn("[join] invalid tableId on button:", btn?.dataset);
+      alert("Could not figure out which table to join. Please try again.");
       return;
     }
     selectedTableId = tableIdParsed;
     signupAction = "join";
 
-    // Make sure we have a numeric user id
-    let uid = Number(currentUserState?.userId ?? NaN);
+    // 🔒 Ensure users.id exists before proceeding (no modal bounce)
+    let uid = await ensureNumericUserIdStrict();
     if (!Number.isFinite(uid)) {
-      // try to recover once
-      await refreshData();
-      uid = Number(currentUserState?.userId ?? NaN);
-      if (!Number.isFinite(uid)) {
-        openAccount();
-        return;
-      }
+      // Still no users row — guide the user
+      alert("We couldn't finish setting up your account. Please log out/in and try again.");
+      openAccount();
+      return;
     }
 
-    // Calculate days difference for setup vs hold
+    // Proceed to Stripe path
+    // Compute days until dinner
     const { data: t } = await supabaseClient
       .from("tables")
       .select("id, dinner_date")
@@ -660,8 +704,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const collateral_cents = COLLATERAL_CENTS_DEFAULT;
       const payload = { userId: uid, tableId: selectedTableId, collateral_cents };
-
-      // helpful trace
       console.log("[join] creating intent with payload:", payload);
 
       if (daysDiff > 7) {
@@ -670,12 +712,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { body: payload }
         );
         if (error) throw new Error(error.message || "stripe-create-setup-intent failed");
-
         const clientSecret = data?.client_secret;
         if (!clientSecret || !String(clientSecret).includes("_secret_")) {
           throw new Error("Server did not return a SetupIntent client_secret.");
         }
-
         JoinState.set({ mode: "setup", clientSecret });
         openCardModal();
       } else {
@@ -684,12 +724,10 @@ document.addEventListener("DOMContentLoaded", () => {
           { body: payload }
         );
         if (error) throw new Error(error.message || "stripe-create-hold failed");
-
         const clientSecret = data?.client_secret;
         if (!clientSecret || !String(clientSecret).includes("_secret_")) {
           throw new Error("Server did not return a PaymentIntent client_secret.");
         }
-
         JoinState.set({ mode: "payment", clientSecret });
         openCardModal();
       }
@@ -699,7 +737,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const handleLeaveClick = async (e) => {
-    const tableId = parseInt(e.target.dataset.tableId);
+    const tableId = Number((/** @type {HTMLElement} */(e.currentTarget))?.dataset?.tableId ?? NaN);
+    if (!Number.isFinite(tableId)) return;
     try {
       const { error } = await supabaseClient.functions.invoke("leave-table", {
         body: { tableId, userId: currentUserState.userId },
@@ -712,11 +751,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const handleJoinWaitlistClick = async (e) => {
-    if (!currentUserState.isLoggedIn) {
-      openAccount();
-      return;
-    }
-    selectedTableId = parseInt(e.target.dataset.tableId);
+    if (!currentUserState.isLoggedIn) { openAccount(); return; }
+    const tableId = Number((/** @type {HTMLElement} */(e.currentTarget))?.dataset?.tableId ?? NaN);
+    if (!Number.isFinite(tableId)) return;
+    selectedTableId = tableId;
     signupAction = "waitlist";
     try {
       const { error } = await supabaseClient.functions.invoke("join-waitlist", {
@@ -731,7 +769,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
   const handleLeaveWaitlistClick = async (e) => {
-    const tableId = parseInt(e.target.dataset.tableId);
+    const tableId = Number((/** @type {HTMLElement} */(e.currentTarget))?.dataset?.tableId ?? NaN);
+    if (!Number.isFinite(tableId)) return;
     try {
       const { error } = await supabaseClient.functions.invoke(
         "leave-waitlist",
@@ -1216,6 +1255,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (loadingSpinner) loadingSpinner.classList.add('hidden');
     }
   };
+
+  // Make spinner resilient against any unexpected script errors
+  window.addEventListener("error", () => {
+    try { loadingSpinner?.classList.add("hidden"); } catch {}
+  });
+  window.addEventListener("unhandledrejection", () => {
+    try { loadingSpinner?.classList.add("hidden"); } catch {}
+  });
 
   initialize();
 });
