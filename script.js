@@ -640,35 +640,42 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const collateral_cents = COLLATERAL_CENTS_DEFAULT;
+      const payload = {
+        userId: Number(currentUserState.userId),
+        tableId: Number(selectedTableId),
+        collateral_cents
+      };
+
       if (daysDiff > 7) {
-        const { data: siRes } = await supabaseClient.functions.invoke("stripe-create-setup-intent", {
-          body: { userId: Number(currentUserState.userId), tableId: Number(selectedTableId), collateral_cents }
-        });
-        const clientSecret = siRes?.client_secret;
+        // SetupIntent path
+        const { data, error } = await supabaseClient.functions.invoke(
+          "stripe-create-setup-intent",
+          { body: payload }
+        );
+        if (error) throw new Error(error.message || "stripe-create-setup-intent failed");
+
+        const clientSecret = data?.client_secret;
         if (!clientSecret || !String(clientSecret).includes("_secret_")) {
           throw new Error("Server did not return a SetupIntent client_secret.");
         }
-        JoinState.set({ mode: "setup", clientSecret });
-        openCardModal();
 
-        if (siErr || !siRes?.client_secret) throw siErr || new Error("Missing client_secret");
-        await confirmSetupIntent(siRes.client_secret);
+        JoinState.set({ mode: "setup", clientSecret });
+        openCardModal(); // do NOT call confirm here; user confirms on the card form submit
       } else {
-        const { data: piRes } = await supabaseClient.functions.invoke("stripe-create-hold", {
-          body: { userId: Number(currentUserState.userId), tableId: Number(selectedTableId), collateral_cents }
-        });
-        const clientSecret = piRes?.client_secret;
+        // PaymentIntent (hold) path
+        const { data, error } = await supabaseClient.functions.invoke(
+          "stripe-create-hold",
+          { body: payload }
+        );
+        if (error) throw new Error(error.message || "stripe-create-hold failed");
+
+        const clientSecret = data?.client_secret;
         if (!clientSecret || !String(clientSecret).includes("_secret_")) {
           throw new Error("Server did not return a PaymentIntent client_secret.");
         }
-        JoinState.set({ mode: "payment", clientSecret });
-        openCardModal(); // your existing function to show the card modal
-        // Defensive: client secret must contain "_secret_"
-        if (!clientSecret || !String(clientSecret).includes("_secret_")) {
-          throw new Error("Server did not return a PaymentIntent client_secret. Check your stripe-create-hold function.");
-        }
 
-        await confirmPaymentIntent(clientSecret);
+        JoinState.set({ mode: "payment", clientSecret });
+        openCardModal(); // do NOT call confirm here; user confirms on the card form submit
       }
     } catch (err) {
       alert(`Could not start join: ${err?.message || err}`);
