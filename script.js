@@ -10,7 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let cardElement = null;
 
   // --- REDIRECT URL ---
-  const EMAIL_REDIRECT_TO = `${location.origin}/sign-up`; // or "/" if your app lives at root
+  const EMAIL_REDIRECT_TO = `https://sup-380d9c.webflow.io/sign-up`; // or "/" if your app lives at root
 
 
   // state for Stripe modal confirmation
@@ -818,8 +818,10 @@ document.addEventListener("DOMContentLoaded", () => {
           } else {
               // No session yet → user must confirm email first
               signupErrorBox.textContent = "Check your email to confirm your account, then return here and log in.";
-              const tabLogin = document.getElementById("tab-login");
-              if (tabLogin) tabLogin.click(); // steer away from re-submitting signup
+              // Don't auto-switch tabs; keep them on Signup so the message is visible.
+              // If you prefer to switch to Login, mirror the message there too:
+              const loginError = document.getElementById("login-error");
+              if (loginError) loginError.textContent = "After confirming via email, enter your email and password here to log in.";
           }
       } catch (err) {
           signupErrorBox.textContent = err.message || "Signup failed";
