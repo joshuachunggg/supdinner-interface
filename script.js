@@ -702,6 +702,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
+    // wherever you open the join/card modal
+  selectedTableId = Number(btn.dataset.tableId || btn.getAttribute("data-table-id"));
+
   // Join modal form (phone-first, legacy path still supported)
   on(userInfoForm, "submit", async (e) => {
     e.preventDefault();
@@ -941,57 +944,98 @@ document.addEventListener("DOMContentLoaded", () => {
   // Stripe card form submit
   on(cardForm, "submit", async (e) => {
     e.preventDefault();
-    if (!pendingClientSecret || !pendingMode) return;
-
-    cardConfirmButton.disabled = true;
     cardErrors.classList.add("hidden");
     cardErrors.textContent = "";
 
-    try {
-      let result, intentId, intentType, paymentMethodId = null;
+    if (!stripe || !cardElement) {
+      cardErrors.textContent = "Card UI not ready. Please reload.";
+      cardErrors.classList.remove("hidden");
+      return;
+    }
 
-      if (pendingMode === "setup") {
-        result = await stripe.confirmCardSetup(pendingClientSecret, {
+    // These are set earlier in your flow; if missing, we’ll fallback from metadata.
+    // pendingMode: "payment" | "setup"
+    // pendingClientSecret: string
+    if (!pendingClientSecret || !pendingMode) {
+      cardErrors.textContent = "Nothing to confirm. Please try again.";
+      cardErrors.classList.remove("hidden");
+      return;
+    }
+
+    cardConfirmButton.disabled = true;
+
+    try {
+      let intentType = pendingMode;        // "payment" | "setup"
+      let intentId = null;
+      let paymentMethodId = null;
+      let meta = null;
+
+      if (intentType === "setup") {
+        const result = await stripe.confirmCardSetup(pendingClientSecret, {
           payment_method: { card: cardElement },
         });
         if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
         intentId = result.setupIntent.id;
-        intentType = "setup";
         paymentMethodId = result.setupIntent.payment_method || null;
+        meta = result.setupIntent.metadata || {};
       } else {
-        result = await stripe.confirmCardPayment(pendingClientSecret, {
+        const result = await stripe.confirmCardPayment(pendingClientSecret, {
           payment_method: { card: cardElement },
         });
         if (result.error) throw new Error(result.error.message || "Card confirmation failed.");
         intentId = result.paymentIntent.id;
-        intentType = "payment";
         paymentMethodId = result.paymentIntent.payment_method || null;
+        meta = result.paymentIntent.metadata || {};
       }
 
-      // Ask the backend to finalize the join ASAP (idempotent).
-      const { data: joinRes, error: joinErr } = await supabaseClient.functions.invoke(
+      // Resolve IDs robustly: prefer state, fallback to metadata from the Stripe intent
+      const resolvedUserId  = Number(currentUserState?.userId) || Number(meta?.userId);
+      const resolvedTableId = Number(selectedTableId)          || Number(meta?.tableId);
+
+      // Hard validation before we call the Edge Function
+      if (
+        !Number.isFinite(resolvedUserId) ||
+        !Number.isFinite(resolvedTableId) ||
+        !intentType ||
+        !intentId
+      ) {
+        console.warn("[join-after-confirm] bad payload", {
+          resolvedUserId, resolvedTableId, intentType, intentId, meta
+        });
+        throw new Error("Could not resolve join details. Please close the modal and try again.");
+      }
+
+      // Call your server to finalize: verify intent + upsert signups + update collateral
+      const { data: jfRes, error: jfErr } = await supabaseClient.functions.invoke(
         "join-after-confirm",
         {
           body: {
-            userId: Number(currentUserState.userId),
-            tableId: Number(selectedTableId),
-            intentType,                // "setup" | "payment"
-            intentId,                  // si_... or pi_...
-            paymentMethodId,          // optional; helps your DB
+            userId: resolvedUserId,
+            tableId: resolvedTableId,
+            intentType,          // "payment" | "setup"
+            intentId,            // pi_... or si_...
+            paymentMethodId,     // optional
           },
         }
       );
-      if (joinErr) console.warn("join-after-confirm error:", joinErr);
+      if (jfErr) {
+        console.warn("join-after-confirm error:", jfErr);
+        throw new Error(jfErr.message || "Could not finalize your join.");
+      }
+      if (!jfRes?.ok) {
+        throw new Error("Join not finalized yet. Please wait a moment and refresh.");
+      }
 
-      // Wait briefly for DB to reflect the signup (handles webhook lag too)
-      await waitForSignup(Number(selectedTableId), Number(currentUserState.userId), 12000);
+      // Poll briefly in case the DB is still catching up (idempotent)
+      await waitForSignup(resolvedTableId, resolvedUserId, 12000);
 
       closeCardModalModalOnly();
       await refreshData();
-      showSuccessStep();
+      showSuccessStep?.();
     } catch (err) {
-      cardErrors.textContent = err.message || "Unexpected error.";
+      cardErrors.textContent = err.message || "Unexpected error. Please try again.";
       cardErrors.classList.remove("hidden");
+    } finally {
       cardConfirmButton.disabled = false;
     }
   });
