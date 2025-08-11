@@ -312,15 +312,30 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function waitForSignup(tableId, userId, timeoutMs = 12000) {
+    const tid = Number.isFinite(Number(tableId)) ? Number(tableId) : null;
+    const uid = Number.isFinite(Number(userId)) ? Number(userId) : null;
+    if (tid === null || uid === null) {
+      console.warn("[waitForSignup] invalid ids:", { tableId, userId });
+      return false;
+    }
+
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const { data, error } = await supabaseClient
         .from("signups")
         .select("id")
-        .eq("table_id", tableId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (data) return true;
+        .eq("table_id", tid)
+        .eq("user_id", uid)
+        .limit(1);
+
+      if (error) {
+        console.warn("[waitForSignup] query error:", error);
+        // brief backoff to avoid hammering if RLS/other transient issues
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+      if (Array.isArray(data) && data.length > 0) return true;
+
       await new Promise((r) => setTimeout(r, 800));
     }
     return false;
