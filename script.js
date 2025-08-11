@@ -571,8 +571,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- EVENT HANDLERS ---
   const handleJoinClick = async (e) => {
-    // Must have an auth session at least
-    const { data: { session } } = await supabaseClient.auth.getSession();
+    console.log("🔵 Join button clicked!", e.target.dataset.tableId);
+          // Must have an auth session at least
+      console.log("🔵 Getting auth session...");
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      console.log("🔵 Auth session:", session ? "exists" : "none");
     if (!session?.user) {
       openAccount();
       return;
@@ -1108,6 +1111,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // 5) ensure Stripe customer (ignore errors)
       try {
+        console.log("🔵 Calling stripe-create-customer function...");
         await supabaseClient.functions.invoke("stripe-create-customer", {
           body: { userId: currentUserState.userId },
         });
