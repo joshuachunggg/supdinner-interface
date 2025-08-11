@@ -588,6 +588,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Always read table id from the button that owns the handler
     const btn = /** @type {HTMLElement} */ (e.currentTarget);
+    console.log("🔵 Button element:", btn);
+    console.log("🔵 Button dataset:", btn?.dataset);
+    console.log("🔵 Button dataset.tableId:", btn?.dataset?.tableId);
     const tableIdParsed = Number(btn?.dataset?.tableId ?? NaN);
     if (!Number.isFinite(tableIdParsed)) {
       console.warn("[join] invalid tableId on button:", btn?.dataset);
